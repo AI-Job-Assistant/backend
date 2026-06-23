@@ -317,6 +317,84 @@ app.get("/api/mypage/heatmap", async (req, res) => {
   }
 });
 
+// 마이페이지 - 강점·약점 AI 분석
+app.get("/api/mypage/analysis", async (req, res) => {
+  try {
+    // 1. 누적된 피드백 모으기 (최근 50개)
+    const [rows] = await pool.query(
+      "SELECT strengths, improvements FROM feedbacks ORDER BY createdAt DESC LIMIT 50"
+    );
+
+    // 데이터가 없으면 분석 불가
+    if (rows.length === 0) {
+      return res.json({
+        hasData: false,
+        message: "아직 분석할 면접 기록이 없어요. 모의면접을 먼저 진행해보세요.",
+        topStrengths: [],
+        topWeaknesses: [],
+        summary: "",
+      });
+    }
+
+    // 2. 강점/개선점을 하나로 합치기 (JSON 컬럼이라 파싱)
+    const allStrengths = [];
+    const allImprovements = [];
+    for (const r of rows) {
+      const s = typeof r.strengths === "string" ? JSON.parse(r.strengths) : r.strengths;
+      const i = typeof r.improvements === "string" ? JSON.parse(r.improvements) : r.improvements;
+      if (Array.isArray(s)) allStrengths.push(...s);
+      if (Array.isArray(i)) allImprovements.push(...i);
+    }
+
+    // 3. 프롬프트
+    const prompt = `다음은 한 지원자가 여러 번의 모의면접에서 받은 피드백 모음입니다.
+
+[강점으로 지적된 것들]
+${allStrengths.map((x) => "- " + x).join("\n")}
+
+[개선점으로 지적된 것들]
+${allImprovements.map((x) => "- " + x).join("\n")}
+
+위 피드백 전체에서 반복적으로 나타나는 패턴을 분석해주세요.
+- 대표 강점 2~3개 (반복되는 잘하는 점)
+- 대표 약점 2~3개 (반복되는 개선 필요점)
+- 종합 코멘트 1~2문장 (격려 + 핵심 조언)
+
+반드시 한국어로, 아래 JSON 형식으로만 답하세요. 다른 말은 절대 쓰지 마세요.
+{
+  "topStrengths": ["...", "..."],
+  "topWeaknesses": ["...", "..."],
+  "summary": "..."
+}`;
+
+    // 4. Groq 호출 (한자 섞이면 재생성, 최대 3회)
+    const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
+    let analysis;
+    for (let i = 0; i < 3; i++) {
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.4,
+      });
+      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
+      analysis = JSON.parse(text);
+      if (!hasCJK(JSON.stringify(analysis))) break;
+      console.log(`한자 감지 — 분석 재생성 ${i + 1}회`);
+    }
+
+    res.json({
+      hasData: true,
+      basedOn: rows.length, // 몇 개 면접 기반인지
+      topStrengths: analysis.topStrengths,
+      topWeaknesses: analysis.topWeaknesses,
+      summary: analysis.summary,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "강점·약점 분석에 실패했습니다." });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`서버 실행 중: http://localhost:${PORT}`);
 });

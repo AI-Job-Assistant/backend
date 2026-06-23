@@ -172,7 +172,45 @@ DB에 없는 AI 직무는 `jobName`으로:
 
 ---
 
-## 6. 조회 API (기존 구현)
+## 6. 마이페이지 — 강점·약점 AI 분석
+
+**GET** `/api/mypage/analysis`
+
+누적된 모든 피드백(`strengths`·`improvements`)을 종합해 반복되는 강점·약점 패턴을 AI가 분석한다.
+
+**응답 200** (데이터 있을 때)
+
+```json
+{
+  "hasData": true,
+  "basedOn": 1,
+  "topStrengths": ["...", "..."],
+  "topWeaknesses": ["...", "..."],
+  "summary": "..."
+}
+```
+
+**응답 200** (면접 기록이 아직 없을 때)
+
+```json
+{
+  "hasData": false,
+  "message": "아직 분석할 면접 기록이 없어요. 모의면접을 먼저 진행해보세요.",
+  "topStrengths": [],
+  "topWeaknesses": [],
+  "summary": ""
+}
+```
+
+- `hasData`: 분석할 데이터 유무 → 프론트는 이 값으로 분석 영역 표시/숨김 결정
+- `basedOn`: 분석에 사용된 면접(피드백) 개수. 적으면(1~2개) 분석이 얄팍할 수 있으니 화면에 "N회 기반" 표시 권장
+- `topStrengths`·`topWeaknesses`: 대표 강점·약점 2~3개 배열
+- `summary`: 종합 코멘트 1~2문장
+- ⚠️ AI 생성이라 응답까지 1~3초 걸릴 수 있음 → 프론트에서 로딩 표시
+
+---
+
+## 7. 조회 API (기존 구현)
 
 - **GET** `/api/jobs` — 직무 목록
 - **GET** `/api/departments` — 학과 목록
@@ -189,8 +227,9 @@ DB에 없는 AI 직무는 `jobName`으로:
 3. **createdAt은 UTC** → 한국시간 표시는 프론트에서 변환.
 4. **questionType은 Enum과 정확히 일치** (Figma 표기와 다름).
 5. **면접 흐름**: 질문 생성(`sessionId`·`questionId` 받기) → 답변 입력 → 답변 평가(`questionId`로 제출) → 결과 표시 → 마이페이지 누적.
-6. **마이페이지 개인화 미적용** — 현재 stats·history·heatmap은 전체 데이터 기준. 로그인 연동(BE B) 후 개인별로 바뀔 예정.
-7. **프로필 영역**(데이터 분석가·신입·가입 N개월차)은 회원 정보라 **BE B 회원 API** 담당. 이 문서 범위 밖.
+6. **강점·약점 분석**은 AI 호출이라 1~3초 지연 가능 → 로딩 표시. `hasData: false`면 분석 영역 숨김 처리.
+7. **마이페이지 개인화 미적용** — 현재 stats·history·heatmap·analysis는 전체 데이터 기준. 로그인 연동(BE B) 후 개인별로 바뀔 예정.
+8. **프로필 영역**(데이터 분석가·신입·가입 N개월차)은 회원 정보라 **BE B 회원 API** 담당. 이 문서 범위 밖.
 
 ---
 
