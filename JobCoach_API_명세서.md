@@ -82,9 +82,15 @@ DB에 없는 AI 직무는 `jobName`으로:
   "questionId": 1,
   "question": "질문 내용",
   "answer": "사용자 답변",
-  "questionType": "직무기술형"
+  "questionType": "직무기술형",
+  "sessionId": 1,
+  "smileCount": 5,
+  "eyeContactRatio": 0.7
 }
 ```
+
+- `sessionId`·`smileCount`·`eyeContactRatio`: **스피킹(카메라) 면접에서만** 함께 전송. 보내면 해당 세션에 카메라 지표가 저장됨. 텍스트 면접은 생략 가능(저장 단계 자동 skip).
+- `eyeContactRatio`: 0~1 사이 소수 (예: 0.7 = 70%)
 
 **응답 200**
 
@@ -141,13 +147,17 @@ DB에 없는 AI 직무는 `jobName`으로:
     "questionType": "직무기술형",
     "createdAt": "2026-06-22T09:13:41.000Z",
     "avgScore": "60",
-    "durationMin": 4
+    "durationMin": 4,
+    "smileCount": 5,
+    "eyeContactRatio": "0.700"
   }
 ]
 ```
 
 - `durationMin`: 면접 시작(질문 생성)부터 마지막 답변 제출까지 걸린 시간 (분, 숫자형)
-- ⚠️ `avgScore`는 **문자열**("60")로 옴 → 프론트에서 `Number()` 변환 필요
+- `smileCount`: 면접 중 웃음 횟수 (숫자형). 스피킹(카메라) 면접에서만 측정 → 텍스트 면접은 `0`
+- `eyeContactRatio`: 카메라 응시율 (문자열 "0.700" = 70%) → 프론트에서 `Number()` 변환 후 ×100. 텍스트 면접은 `0`
+- ⚠️ `avgScore`·`eyeContactRatio`는 **문자열**로 옴 → `Number()` 변환 필요
 - ⚠️ 질문만 생성하고 답변을 안 한 세션은 `avgScore`·`durationMin`이 **`null`** 일 수 있음 → 프론트에서 방어 처리(예: "기록 없음" 표시)
 
 ---

@@ -185,7 +185,7 @@ res.json({ sessionId, jobName, questionType, questions: savedQuestions });
 
 app.post("/api/interview/feedback", async (req, res) => {
   try {
-    const { questionId, question, answer, questionType } = req.body;
+    const { questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio } = req.body;
     if (!answer || answer.trim().length === 0) {
       return res.status(400).json({ error: "답변이 비어 있습니다." });
     }
@@ -246,7 +246,15 @@ await pool.query(
   ]
 );
 
-res.json({ answerId, questionType, ...feedback });
+// 카메라 지표가 넘어오면 세션에 저장 (텍스트 면접이면 안 넘어와서 건너뜀)
+    if (sessionId && (smileCount != null || eyeContactRatio != null)) {
+      await pool.query(
+        "UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?",
+        [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]
+      );
+    }
+
+    res.json({ answerId, questionType, ...feedback });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "피드백 생성에 실패했습니다." });
@@ -280,12 +288,15 @@ app.get("/api/mypage/history", async (req, res) => {
         s.jobName,
         s.questionType,
         s.createdAt,
-        ROUND(AVG(f.score)) AS avgScore
+        ROUND(AVG(f.score)) AS avgScore,
+        TIMESTAMPDIFF(MINUTE, s.createdAt, MAX(a.createdAt)) AS durationMin,
+        s.smileCount,
+        s.eyeContactRatio
       FROM interview_sessions s
       LEFT JOIN questions q ON q.sessionId = s.id
       LEFT JOIN answers a ON a.questionId = q.id
       LEFT JOIN feedbacks f ON f.answerId = a.id
-      GROUP BY s.id, s.jobName, s.questionType, s.createdAt
+      GROUP BY s.id, s.jobName, s.questionType, s.createdAt, s.smileCount, s.eyeContactRatio
       ORDER BY s.createdAt DESC
       LIMIT 10
     `);
