@@ -7,7 +7,9 @@
 
 ## 개요
 
-- **Base URL**: `http://localhost:5000` (배포 후 공용 주소로 교체)
+- **Base URL**: `https://jobcoach-backend-e0yl.onrender.com` (배포 완료 · Render)
+  - 로컬 개발 시엔 `http://localhost:5000`
+  - ⚠️ 무료 플랜이라 15분 미사용 시 서버가 잠듦 → 첫 호출이 30초~1분 느릴 수 있음(정상). 데모 전 미리 한 번 호출해 깨워둘 것.
 - **응답 형식**: JSON
 - **인증**: 현재 미적용. 마이페이지 API는 지금은 **전체 데이터 기준**으로 응답한다. 추후 JWT 연동 시 `userId` 기반 개인별 필터 추가 예정 (BE B 담당).
 
