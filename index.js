@@ -12,12 +12,15 @@ app.use(cors());
 app.use(express.json());
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 // DB 연결 풀 (.env에서 정보 읽어옴)
+// 배포 환경(Render)이면 클라우드 DB, 아니면 로컬 DB 사용
+const isProd = process.env.NODE_ENV === "production";
+
 const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  host: isProd ? process.env.CLOUD_DB_HOST : process.env.DB_HOST,
+  port: isProd ? process.env.CLOUD_DB_PORT : process.env.DB_PORT,
+  user: isProd ? process.env.CLOUD_DB_USER : process.env.DB_USER,
+  password: isProd ? process.env.CLOUD_DB_PASSWORD : process.env.DB_PASSWORD,
+  database: isProd ? process.env.CLOUD_DB_NAME : process.env.DB_NAME,
 });
 
 app.get("/", (req, res) => {

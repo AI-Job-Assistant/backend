@@ -2,14 +2,23 @@ const mysql = require("mysql2/promise");
 const fs = require("fs");
 const path = require("path");
 const csv = require("csv-parser");
+require("dotenv").config();
 
 const DB_CONFIG = {
-  host: "localhost",
-  port: 3306,
-  user: "root",
-  password: "Judy0706!",   // ← 이 줄만 바꾸기
-  database: "jobcoach_db",
+  host: process.env.CLOUD_DB_HOST,
+  port: process.env.CLOUD_DB_PORT,
+  user: process.env.CLOUD_DB_USER,
+  password: process.env.CLOUD_DB_PASSWORD,
+  database: process.env.CLOUD_DB_NAME,
 };
+
+//const DB_CONFIG = {
+//  host: "localhost",
+//  port: 3306,
+//  user: "root",
+//  password: "Judy0706!",   // ← 이 줄만 바꾸기
+//  database: "jobcoach_db",
+//};
 
 // CSV 한 파일을 읽어 배열로 돌려주는 함수 (BOM 제거 포함)
 function readCsv(filename) {
