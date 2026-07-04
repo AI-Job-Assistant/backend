@@ -10,7 +10,7 @@
 - **Base URL**: `http://localhost:5000` (배포 후 공용 주소로 교체)
 - **응답 형식**: JSON
 - **인증**: 현재 미적용. 마이페이지 API는 지금은 전체 데이터 기준으로 응답한다. 추후 JWT 연동 시 userId 기반 개인별 필터 추가 예정 (BE B 담당).
--> JWT 인증 적용. 로그인/회원가입 성공 시 토큰 발급. 인증이 필요한 API는 `Authorization: Bearer <token>` 헤더 사용.
++ JWT 인증 적용. 로그인/회원가입 성공 시 토큰 발급. 인증이 필요한 API는 `Authorization: Bearer <token>` 헤더 사용.
 
 ## 공통 Enum
 
