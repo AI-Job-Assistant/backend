@@ -1,7 +1,7 @@
 # JobCoach API 명세서
 
 > 프론트엔드 ↔ 백엔드 연동 계약 문서  
-> 최종 업데이트: 2026-06-23 · 작성: 백엔드 A (시현)
+> 최종 업데이트: 2026-07-04 · 작성: 백엔드 A (시현), 백엔드 B (수안)
 
 ---
 
@@ -9,7 +9,8 @@
 
 - **Base URL**: `http://localhost:5000` (배포 후 공용 주소로 교체)
 - **응답 형식**: JSON
-- **인증**: 현재 미적용. 마이페이지 API는 지금은 **전체 데이터 기준**으로 응답한다. 추후 JWT 연동 시 `userId` 기반 개인별 필터 추가 예정 (BE B 담당).
+- **인증**: 현재 미적용. 마이페이지 API는 지금은 전체 데이터 기준으로 응답한다. 추후 JWT 연동 시 userId 기반 개인별 필터 추가 예정 (BE B 담당).
+-> JWT 인증 적용. 로그인/회원가입 성공 시 토큰 발급. 인증이 필요한 API는 `Authorization: Bearer <token>` 헤더 사용.
 
 ## 공통 Enum
 
@@ -220,6 +221,192 @@ DB에 없는 AI 직무는 `jobName`으로:
 
 ---
 
+## 8. 회원가입
+
+**POST** `/api/auth/signup`
+
+학번, 이름, 학과, 이메일, 비밀번호를 입력받아 회원 정보를 저장하고 JWT 토큰을 발급한다.
+
+**요청 Body**
+
+```json
+{
+  "studentId": "20241234",
+  "name": "홍길동",
+  "departmentId": 1,
+  "email": "20241234@sungshin.ac.kr",
+  "password": "12345678"
+}
+```
+
+- `studentId`: 학번, 8자리 숫자
+- `name`: 사용자 이름
+- `departmentId`: 학과 ID
+- `email`: 이메일
+- `password`: 비밀번호, 8자 이상
+
+**응답 201**
+
+```json
+{
+  "success": true,
+  "data": {
+    "token": "eyJ...",
+    "user": {
+      "id": 1,
+      "studentId": "20241234",
+      "name": "홍길동",
+      "email": "20241234@sungshin.ac.kr",
+      "departmentId": 1
+    }
+  }
+}
+```
+
+**에러**
+
+필수 입력값 누락:
+
+```json
+{
+  "success": false,
+  "error": "필수 입력값이 누락되었습니다."
+}
+```
+
+학번 형식 오류:
+
+```json
+{
+  "success": false,
+  "error": "학번은 8자리 숫자여야 합니다."
+}
+```
+
+비밀번호 길이 오류:
+
+```json
+{
+  "success": false,
+  "error": "비밀번호는 8자 이상이어야 합니다."
+}
+```
+
+이미 사용 중인 학번:
+
+```json
+{
+  "success": false,
+  "error": "이미 사용 중인 학번입니다."
+}
+```
+
+---
+
+## 9. 로그인
+
+**POST** `/api/auth/login`
+
+학번과 비밀번호로 로그인하고 JWT 토큰을 발급한다.
+
+**요청 Body**
+
+```json
+{
+  "studentId": "20241234",
+  "password": "12345678"
+}
+```
+
+**응답 200**
+
+```json
+{
+  "success": true,
+  "data": {
+    "token": "eyJ...",
+    "user": {
+      "id": 1,
+      "studentId": "20241234",
+      "name": "홍길동",
+      "email": "20241234@sungshin.ac.kr",
+      "departmentId": 1
+    }
+  }
+}
+```
+
+**에러**
+
+학번 또는 비밀번호 누락:
+
+```json
+{
+  "success": false,
+  "error": "학번과 비밀번호를 입력해주세요."
+}
+```
+
+학번이 없거나 비밀번호가 틀린 경우:
+
+```json
+{
+  "success": false,
+  "error": "학번 또는 비밀번호가 올바르지 않습니다."
+}
+```
+
+---
+
+## 10. 내 정보 조회
+
+**GET** `/api/users/me`
+
+JWT 토큰을 검증한 뒤 로그인한 사용자의 정보를 반환한다.
+
+**요청 Header**
+
+```http
+Authorization: Bearer <token>
+```
+
+**응답 200**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "studentId": "20241234",
+    "name": "홍길동",
+    "email": "20241234@sungshin.ac.kr",
+    "departmentId": 1
+  }
+}
+```
+
+**에러**
+
+토큰이 없거나 형식이 잘못된 경우:
+
+```json
+{
+  "success": false,
+  "error": "No token"
+}
+```
+
+토큰이 유효하지 않은 경우:
+
+```json
+{
+  "success": false,
+  "error": "Invalid token"
+}
+```
+
+---
+
 ## 프론트 연동 참고사항
 
 1. **질문 생성** — DB 직무는 `jobId`, AI 직무(AI 엔지니어·머신러닝 엔지니어·AI 서비스 기획자 등)는 `jobName`으로 보낸다.
@@ -230,6 +417,8 @@ DB에 없는 AI 직무는 `jobName`으로:
 6. **강점·약점 분석**은 AI 호출이라 1~3초 지연 가능 → 로딩 표시. `hasData: false`면 분석 영역 숨김 처리.
 7. **마이페이지 개인화 미적용** — 현재 stats·history·heatmap·analysis는 전체 데이터 기준. 로그인 연동(BE B) 후 개인별로 바뀔 예정.
 8. **프로필 영역**(데이터 분석가·신입·가입 N개월차)은 회원 정보라 **BE B 회원 API** 담당. 이 문서 범위 밖.
+9. **회원가입/로그인 토큰 처리** — `POST /api/auth/signup`, `POST /api/auth/login` 성공 시 `data.token`을 저장한다.
+10. **인증 API 호출** — `GET /api/users/me` 같은 인증 필요 API는 Header에 `Authorization: Bearer <token>`을 포함해야 한다.
 
 ---
 
