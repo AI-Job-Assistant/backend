@@ -417,6 +417,7 @@ Authorization: Bearer <token>
 6. **강점·약점 분석**은 AI 호출이라 1~3초 지연 가능 → 로딩 표시. `hasData: false`면 분석 영역 숨김 처리.
 7. **마이페이지 개인화 미적용** — 현재 stats·history·heatmap·analysis는 전체 데이터 기준. 로그인 연동(BE B) 후 개인별로 바뀔 예정.
 8. **프로필 영역**(데이터 분석가·신입·가입 N개월차)은 회원 정보라 **BE B 회원 API** 담당. 이 문서 범위 밖.
+->  기본 회원 정보는 `GET /api/users/me`에서 조회한다. 데이터 분석가·신입·가입 N개월차 등 추가 프로필 정보는 추후 확장 예정.
 9. **회원가입/로그인 토큰 처리** — `POST /api/auth/signup`, `POST /api/auth/login` 성공 시 `data.token`을 저장한다.
 10. **인증 API 호출** — `GET /api/users/me` 같은 인증 필요 API는 Header에 `Authorization: Bearer <token>`을 포함해야 한다.
 
