@@ -31,6 +31,15 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+
+const jobsRouter = require('./domains/jobs/jobs.router');
+app.use('/api', jobsRouter);
+
+const interviewRouter = require('./domains/interview/interview.router');
+app.use('/api/interview', interviewRouter);
+
+const mypageRouter = require('./domains/mypage/mypage.router');
+app.use('/api/mypage', mypageRouter);
 app.use('/api/users', userRouter);
 app.use(errorHandler);
 

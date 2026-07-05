@@ -1,0 +1,31 @@
+const interviewService = require('./interview.service');
+
+const generateQuestions = async (req, res) => {
+  try {
+    const { jobId, jobName, questionType } = req.body;
+    const result = await interviewService.generateQuestions({ jobId, jobName, questionType });
+    res.json(result);
+  } catch (err) {
+    if (err.message === "JOB_NOT_FOUND") {
+      return res.status(404).json({ error: "직무를 찾을 수 없습니다." });
+    }
+    console.error(err);
+    res.status(500).json({ error: "질문 생성에 실패했습니다." });
+  }
+};
+
+const evaluateAnswer = async (req, res) => {
+  try {
+    const { answer } = req.body;
+    if (!answer || answer.trim().length === 0) {
+      return res.status(400).json({ error: "답변이 비어 있습니다." });
+    }
+    const result = await interviewService.evaluateAnswer(req.body);
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "피드백 생성에 실패했습니다." });
+  }
+};
+
+module.exports = { generateQuestions, evaluateAnswer };
