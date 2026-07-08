@@ -134,7 +134,8 @@ Return ONLY a JSON object in exactly this shape, all text in Korean:
   "score": <integer 0-100>,
   "strengths": ["<잘한 점>", "..."],
   "improvements": ["<개선할 점>", "..."],
-  "suggestion": "<답변을 어떻게 보완하면 좋을지 2~3문장>"
+  "suggestion": "<답변을 어떻게 보완하면 좋을지 2~3문장>",
+  "modelAnswer": "<이 질문에 대한 모범답안 예시. 해당 직무·질문유형에 맞게 3~4문장으로. 경험행동형이면 STAR 구조로 작성>"
 }
 
 Rules:
@@ -155,7 +156,7 @@ Rules:
       const parsed = JSON.parse(text);
 
       // 유효성 확인: score가 숫자이고, 한자 없어야 통과
-      if (typeof parsed.score === "number" && !hasCJK(JSON.stringify(parsed))) {
+      if (typeof parsed.score === "number" && typeof parsed.modelAnswer === "string" && !hasCJK(JSON.stringify(parsed))) {
         feedback = parsed;
         break;
       }
