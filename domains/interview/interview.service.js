@@ -72,16 +72,31 @@ Rules:
 - Write ALL questions in Korean Hangul only. Do NOT use any Chinese characters (漢字).
 - Return ONLY a JSON array of 5 strings, nothing else.`;
 
-  let questions = [];
+  let questions = null;
   for (let i = 0; i < 3; i++) {
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
-    });
-    let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
-    questions = JSON.parse(text);
-    if (!questions.some(hasCJK)) break;
+    try {
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+      });
+      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(text);
+
+      // 유효성 확인: 배열이고, 비어있지 않고, 한자 없어야 통과
+      if (Array.isArray(parsed) && parsed.length > 0 && !parsed.some(hasCJK)) {
+        questions = parsed;
+        break;
+      }
+      console.log(`질문 생성 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
+    } catch (err) {
+      console.log(`질문 생성 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+    }
+  }
+
+  // 3번 다 실패하면 명확한 에러
+  if (!questions) {
+    throw new Error("QUESTION_GENERATION_FAILED");
   }
 
   // DB 저장
@@ -128,16 +143,30 @@ Rules:
 - strengths and improvements: 2-3 specific items each, referring to the actual answer.
 - Return ONLY the JSON. No markdown, no extra text.`;
 
-  let feedback;
+  let feedback = null;
   for (let i = 0; i < 3; i++) {
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.4,
-    });
-    let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
-    feedback = JSON.parse(text);
-    if (!hasCJK(JSON.stringify(feedback))) break;
+    try {
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.4,
+      });
+      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(text);
+
+      // 유효성 확인: score가 숫자이고, 한자 없어야 통과
+      if (typeof parsed.score === "number" && !hasCJK(JSON.stringify(parsed))) {
+        feedback = parsed;
+        break;
+      }
+      console.log(`피드백 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
+    } catch (err) {
+      console.log(`피드백 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+    }
+  }
+
+  if (!feedback) {
+    throw new Error("FEEDBACK_GENERATION_FAILED");
   }
 
   // DB 저장

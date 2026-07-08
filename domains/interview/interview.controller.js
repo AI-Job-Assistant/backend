@@ -9,6 +9,9 @@ const generateQuestions = async (req, res) => {
     if (err.message === "JOB_NOT_FOUND") {
       return res.status(404).json({ error: "직무를 찾을 수 없습니다." });
     }
+    if (err.message === "QUESTION_GENERATION_FAILED") {
+      return res.status(503).json({ error: "AI 질문 생성에 실패했습니다. 잠시 후 다시 시도해주세요." });
+    }
     console.error(err);
     res.status(500).json({ error: "질문 생성에 실패했습니다." });
   }

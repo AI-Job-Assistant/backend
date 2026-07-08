@@ -114,18 +114,31 @@ ${allImprovements.map((x) => "- " + x).join("\n")}
   "summary": "..."
 }`;
 
-  let analysis;
+  let analysis = null;
   for (let i = 0; i < 3; i++) {
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.4,
-    });
-    let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
-    analysis = JSON.parse(text);
-    if (!hasCJK(JSON.stringify(analysis))) break;
+    try {
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.4,
+      });
+      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(text);
+
+      // 유효성 확인: topStrengths 배열이 있고, 한자 없어야 통과
+      if (Array.isArray(parsed.topStrengths) && !hasCJK(JSON.stringify(parsed))) {
+        analysis = parsed;
+        break;
+      }
+      console.log(`분석 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
+    } catch (err) {
+      console.log(`분석 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+    }
   }
 
+  if (!analysis) {
+    throw new Error("ANALYSIS_GENERATION_FAILED");
+  }
   return {
     hasData: true,
     basedOn: rows.length,
