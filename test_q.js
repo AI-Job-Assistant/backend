@@ -3,9 +3,9 @@ async function main() {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      jobName: "데이터 분석가",
-      questionType: "직무기술형",
-    }),
+  jobName: "데이터 분석가",
+  questionType: "직무기술형",   // ← 올바른 값으로 되돌리기
+}),
   });
   console.log(JSON.stringify(await res.json(), null, 2));
 }
