@@ -2,6 +2,23 @@ const pool = require('../../config/db');
 const Groq = require('groq-sdk');
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+const formatDate = (date) => {
+  if (!date) return null;
+
+  const parts = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(date));
+
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  return `${year}.${month}.${day}`;
+};
+
 const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 
 const TYPE_GUIDE = {
@@ -31,7 +48,7 @@ const EVAL_GUIDE = {
 };
 
 // 질문 생성
-const generateQuestions = async ({ jobId, jobName, questionType }) => {
+const generateQuestions = async ({ userId, jobId, jobName, questionType }) => {
   // jobName이 안 왔으면 jobId로 조회
   if (!jobName) {
     const [jobs] = await pool.query("SELECT jobName FROM jobs WHERE id = ?", [jobId]);
@@ -101,8 +118,12 @@ Rules:
 
   // DB 저장
   const [sessionResult] = await pool.query(
-    "INSERT INTO interview_sessions (userId, jobId, jobName, questionType) VALUES (?, ?, ?, ?)",
-    [null, jobId ?? null, jobName, questionType]
+     `
+    INSERT INTO interview_sessions
+      (userId, jobId, jobName, questionType)
+    VALUES (?, ?, ?, ?)
+  `,
+  [userId, jobId ?? null, jobName, questionType]
   );
   const sessionId = sessionResult.insertId;
 
@@ -119,7 +140,27 @@ Rules:
 };
 
 // 답변 평가
-const evaluateAnswer = async ({ questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio }) => {
+const evaluateAnswer = async ({ userId, questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio }) => {
+    const [questionRows] = await pool.query(
+    `
+      SELECT
+        q.id,
+        q.sessionId
+      FROM questions q
+      JOIN interview_sessions s
+        ON s.id = q.sessionId
+      WHERE q.id = ?
+        AND s.userId = ?
+    `,
+    [questionId, userId]
+  );
+
+  if (questionRows.length === 0) {
+    throw new Error("QUESTION_ACCESS_DENIED");
+  }
+
+  const ownedSessionId = questionRows[0].sessionId;
+
   const guide = EVAL_GUIDE[questionType] || EVAL_GUIDE["직무기술형"];
   const prompt = `You are a Korean interview coach evaluating a candidate's answer.
 
@@ -183,14 +224,140 @@ Rules:
   );
 
   // 카메라 지표 저장 (넘어온 경우만)
-  if (sessionId && (smileCount != null || eyeContactRatio != null)) {
-    await pool.query(
-      "UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?",
-      [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]
-    );
-  }
+  if (smileCount != null || eyeContactRatio != null) {
+  await pool.query(
+    `
+      UPDATE interview_sessions
+      SET
+        smileCount = ?,
+        eyeContactRatio = ?
+      WHERE id = ?
+        AND userId = ?
+    `,
+    [
+      smileCount ?? 0,
+      eyeContactRatio ?? 0,
+      ownedSessionId,
+      userId,
+    ]
+  );
+}
 
   return { answerId, questionType, ...feedback };
 };
 
-module.exports = { generateQuestions, evaluateAnswer };
+const getInterviewById = async (interviewId, userId) => {
+  const [sessionRows] = await pool.query(
+    `
+      SELECT
+        id,
+        userId,
+        jobId,
+        jobName,
+        questionType,
+        createdAt,
+        smileCount,
+        eyeContactRatio
+      FROM interview_sessions
+      WHERE id = ?
+    `,
+    [interviewId]
+  );
+
+  if (sessionRows.length === 0) {
+    throw new Error("INTERVIEW_NOT_FOUND");
+  }
+
+  const session = sessionRows[0];
+
+  if (Number(session.userId) !== Number(userId)) {
+    throw new Error("INTERVIEW_ACCESS_DENIED");
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        q.id AS questionId,
+        q.orderNo,
+        q.content AS question,
+        a.id AS answerId,
+        a.content AS answer,
+        a.createdAt AS answeredAt,
+        f.score,
+        f.strengths,
+        f.improvements,
+        f.suggestion
+      FROM questions q
+      LEFT JOIN answers a
+        ON a.questionId = q.id
+      LEFT JOIN feedbacks f
+        ON f.answerId = a.id
+      WHERE q.sessionId = ?
+      ORDER BY q.orderNo ASC
+    `,
+    [interviewId]
+  );
+
+  const items = rows.map((row) => {
+    let strengths = row.strengths;
+    let improvements = row.improvements;
+
+    if (typeof strengths === "string") {
+      try {
+        strengths = JSON.parse(strengths);
+      } catch {
+        strengths = [];
+      }
+    }
+
+    if (typeof improvements === "string") {
+      try {
+        improvements = JSON.parse(improvements);
+      } catch {
+        improvements = [];
+      }
+    }
+
+    return {
+      questionId: row.questionId,
+      orderNo: row.orderNo,
+      question: row.question,
+      answerId: row.answerId,
+      answer: row.answer,
+      answeredAt: row.answeredAt,
+      score: row.score == null ? null : Number(row.score),
+      strengths: Array.isArray(strengths) ? strengths : [],
+      improvements: Array.isArray(improvements) ? improvements : [],
+      suggestion: row.suggestion,
+    };
+  });
+
+  const scoredItems = items.filter(
+    (item) => item.score != null
+  );
+
+  const averageScore =
+    scoredItems.length === 0
+      ? null
+      : Math.round(
+          scoredItems.reduce(
+            (sum, item) => sum + item.score,
+            0
+          ) / scoredItems.length
+        );
+
+  return {
+    id: session.id,
+    jobId: session.jobId,
+    jobName: session.jobName,
+    questionType: session.questionType,
+    createdAt: session.createdAt,
+    formattedDate: formatDate(session.createdAt),
+    smileCount: Number(session.smileCount || 0),
+    eyeContactRatio: Number(session.eyeContactRatio || 0),
+    averageScore,
+    questions: items,
+  };
+};
+
+module.exports = { generateQuestions, evaluateAnswer, getInterviewById };

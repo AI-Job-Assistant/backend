@@ -160,9 +160,129 @@ const getMe = async (req, res, next) => {
     }
 };
 
+const changePassword = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { currentPassword, newPassword } = req.body;
+
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({
+                success: false,
+                error: '현재 비밀번호와 새 비밀번호를 모두 입력해주세요.'
+            });
+        }
+
+        if (newPassword.length < 8) {
+            return res.status(400).json({
+                success: false,
+                error: '새 비밀번호는 8자 이상이어야 합니다.'
+            });
+        }
+
+        const result = await userService.changePassword(
+            userId,
+            currentPassword,
+            newPassword
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: result
+        });
+    } catch (err) {
+        if (err.message === 'USER_NOT_FOUND') {
+            return res.status(404).json({
+                success: false,
+                error: '사용자를 찾을 수 없습니다.'
+            });
+        }
+
+        if (err.message === 'CURRENT_PASSWORD_INCORRECT') {
+            return res.status(401).json({
+                success: false,
+                error: '현재 비밀번호가 일치하지 않습니다.'
+            });
+        }
+
+        if (err.message === 'SAME_AS_CURRENT_PASSWORD') {
+            return res.status(400).json({
+                success: false,
+                error: '새 비밀번호는 현재 비밀번호와 달라야 합니다.'
+            });
+        }
+
+        console.error('비밀번호 변경 오류:', err);
+
+        return res.status(500).json({
+            success: false,
+            error: '비밀번호 변경에 실패했습니다.'
+        });
+    }
+};
+
+const updateProfile = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { name, email, departmentId } = req.body;
+
+        if (!name || !email || departmentId == null) {
+            return res.status(400).json({
+                success: false,
+                error: '이름, 이메일, 학과 정보를 모두 입력해주세요.'
+            });
+        }
+
+        const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+        if (!emailPattern.test(email)) {
+            return res.status(400).json({
+                success: false,
+                error: '올바른 이메일 형식을 입력해주세요.'
+            });
+        }
+
+        const result = await userService.updateProfile(
+            userId,
+            {
+                name,
+                email,
+                departmentId
+            }
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: result
+        });
+    } catch (err) {
+        if (err.message === 'USER_NOT_FOUND') {
+            return res.status(404).json({
+                success: false,
+                error: '사용자를 찾을 수 없습니다.'
+            });
+        }
+
+        if (err.message === 'EMAIL_ALREADY_EXISTS') {
+            return res.status(409).json({
+                success: false,
+                error: '이미 사용 중인 이메일입니다.'
+            });
+        }
+
+        console.error('프로필 수정 오류:', err);
+
+        return res.status(500).json({
+            success: false,
+            error: '프로필 수정에 실패했습니다.'
+        });
+    }
+};
+
 module.exports = {
     getAllUsers,
     signup,
     login,
-    getMe
+    getMe,
+    changePassword,
+    updateProfile
 };

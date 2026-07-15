@@ -2,79 +2,218 @@ const pool = require('../../config/db');
 const Groq = require('groq-sdk');
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+const formatDate = (date) => {
+  if (!date) return null;
+
+  const parts = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(date));
+
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  return `${year}.${month}.${day}`;
+};
+
 const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 
 // 통계
-const getStats = async () => {
+const getStats = async (userId) => {
   const [sessionRows] = await pool.query(
-    "SELECT COUNT(*) AS totalSessions FROM interview_sessions"
+    `
+      SELECT COUNT(*) AS totalSessions
+      FROM interview_sessions
+      WHERE userId = ?
+    `,
+    [userId]
   );
+
   const [scoreRows] = await pool.query(
-    "SELECT AVG(score) AS avgScore FROM feedbacks"
+    `
+      SELECT AVG(f.score) AS avgScore
+      FROM feedbacks f
+      JOIN answers a ON a.id = f.answerId
+      JOIN questions q ON q.id = a.questionId
+      JOIN interview_sessions s ON s.id = q.sessionId
+      WHERE s.userId = ?
+    `,
+    [userId]
   );
-  const [monthRows] = await pool.query(`
-    SELECT
-      ROUND(AVG(CASE WHEN s.createdAt >= DATE_FORMAT(NOW(), '%Y-%m-01')
-                     THEN f.score END)) AS thisMonth,
-      ROUND(AVG(CASE WHEN s.createdAt >= DATE_FORMAT(NOW() - INTERVAL 1 MONTH, '%Y-%m-01')
-                      AND s.createdAt <  DATE_FORMAT(NOW(), '%Y-%m-01')
-                     THEN f.score END)) AS lastMonth
-    FROM feedbacks f
-    JOIN answers a ON a.id = f.answerId
-    JOIN questions q ON q.id = a.questionId
-    JOIN interview_sessions s ON s.id = q.sessionId
-  `);
+
+  const [monthRows] = await pool.query(
+    `
+      SELECT
+        ROUND(
+          AVG(
+            CASE
+              WHEN s.createdAt >= DATE_FORMAT(NOW(), '%Y-%m-01')
+              THEN f.score
+            END
+          )
+        ) AS thisMonth,
+        ROUND(
+          AVG(
+            CASE
+              WHEN s.createdAt >= DATE_FORMAT(
+                NOW() - INTERVAL 1 MONTH,
+                '%Y-%m-01'
+              )
+              AND s.createdAt < DATE_FORMAT(NOW(), '%Y-%m-01')
+              THEN f.score
+            END
+          )
+        ) AS lastMonth
+      FROM feedbacks f
+      JOIN answers a ON a.id = f.answerId
+      JOIN questions q ON q.id = a.questionId
+      JOIN interview_sessions s ON s.id = q.sessionId
+      WHERE s.userId = ?
+    `,
+    [userId]
+  );
+
   const thisMonth = monthRows[0].thisMonth;
   const lastMonth = monthRows[0].lastMonth;
-  const monthlyChange = thisMonth != null && lastMonth != null ? thisMonth - lastMonth : 0;
+
+  const monthlyChange =
+    thisMonth != null && lastMonth != null
+      ? Number(thisMonth) - Number(lastMonth)
+      : 0;
 
   return {
-    totalSessions: sessionRows[0].totalSessions,
-    avgScore: Math.round(scoreRows[0].avgScore || 0),
+    totalSessions: Number(sessionRows[0].totalSessions),
+    avgScore: Math.round(Number(scoreRows[0].avgScore) || 0),
     monthlyChange,
   };
 };
 
 // 최근 이력
-const getHistory = async () => {
-  const [rows] = await pool.query(`
-    SELECT
-      s.id, s.jobName, s.questionType, s.createdAt,
-      ROUND(AVG(f.score)) AS avgScore,
-      TIMESTAMPDIFF(MINUTE, s.createdAt, MAX(a.createdAt)) AS durationMin,
-      s.smileCount, s.eyeContactRatio
-    FROM interview_sessions s
-    LEFT JOIN questions q ON q.sessionId = s.id
-    LEFT JOIN answers a ON a.questionId = q.id
-    LEFT JOIN feedbacks f ON f.answerId = a.id
-    GROUP BY s.id, s.jobName, s.questionType, s.createdAt, s.smileCount, s.eyeContactRatio
-    ORDER BY s.createdAt DESC
-    LIMIT 10
-  `);
-  return rows;
+const getHistory = async (userId, page = 1, limit = 10) => {
+  const offset = (page - 1) * limit;
+
+  const [countRows] = await pool.query(
+    `
+      SELECT COUNT(*) AS total
+      FROM interview_sessions
+      WHERE userId = ?
+    `,
+    [userId]
+  );
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        s.id,
+        s.jobName,
+        s.questionType,
+        s.createdAt,
+        ROUND(AVG(f.score)) AS avgScore,
+        TIMESTAMPDIFF(
+          MINUTE,
+          s.createdAt,
+          MAX(a.createdAt)
+        ) AS durationMin,
+        s.smileCount,
+        s.eyeContactRatio
+      FROM interview_sessions s
+      LEFT JOIN questions q
+        ON q.sessionId = s.id
+      LEFT JOIN answers a
+        ON a.questionId = q.id
+      LEFT JOIN feedbacks f
+        ON f.answerId = a.id
+      WHERE s.userId = ?
+      GROUP BY
+        s.id,
+        s.jobName,
+        s.questionType,
+        s.createdAt,
+        s.smileCount,
+        s.eyeContactRatio
+      ORDER BY s.createdAt DESC
+      LIMIT ? OFFSET ?
+    `,
+    [userId, limit, offset]
+  );
+
+  const total = Number(countRows[0].total);
+
+  return {
+    items: rows.map((row) => ({
+      id: row.id,
+      jobName: row.jobName,
+      questionType: row.questionType,
+      createdAt: row.createdAt,
+      formattedDate: formatDate(row.createdAt),
+      avgScore:
+        row.avgScore == null ? null : Number(row.avgScore),
+      durationMin:
+        row.durationMin == null ? null : Number(row.durationMin),
+      smileCount: Number(row.smileCount || 0),
+      eyeContactRatio: Number(row.eyeContactRatio || 0),
+    })),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
 };
 
 // 히트맵
-const getHeatmap = async () => {
-  const [rows] = await pool.query(`
-    SELECT
-      DATE_FORMAT(s.createdAt, '%Y-%m-%d') AS date,
-      COUNT(DISTINCT s.id) AS sessionCount,
-      ROUND(AVG(f.score)) AS avgScore
-    FROM interview_sessions s
-    LEFT JOIN questions q ON q.sessionId = s.id
-    LEFT JOIN answers a ON a.questionId = q.id
-    LEFT JOIN feedbacks f ON f.answerId = a.id
-    GROUP BY DATE_FORMAT(s.createdAt, '%Y-%m-%d')
-    ORDER BY date
-  `);
-  return rows;
+const getHeatmap = async (userId) => {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        DATE_FORMAT(s.createdAt, '%Y-%m-%d') AS date,
+        COUNT(DISTINCT s.id) AS sessionCount,
+        ROUND(AVG(f.score)) AS avgScore
+      FROM interview_sessions s
+      LEFT JOIN questions q
+        ON q.sessionId = s.id
+      LEFT JOIN answers a
+        ON a.questionId = q.id
+      LEFT JOIN feedbacks f
+        ON f.answerId = a.id
+      WHERE s.userId = ?
+      GROUP BY DATE_FORMAT(s.createdAt, '%Y-%m-%d')
+      ORDER BY date
+    `,
+    [userId]
+  );
+
+  return rows.map((row) => ({
+    date: row.date,
+    sessionCount: Number(row.sessionCount),
+    avgScore:
+      row.avgScore == null ? null : Number(row.avgScore),
+  }));
 };
 
 // 강점·약점 분석
-const getAnalysis = async () => {
+const getAnalysis = async (userId) => {
   const [rows] = await pool.query(
-    "SELECT strengths, improvements FROM feedbacks ORDER BY createdAt DESC LIMIT 50"
+    `
+      SELECT
+        f.strengths,
+        f.improvements
+      FROM feedbacks f
+      JOIN answers a
+        ON a.id = f.answerId
+      JOIN questions q
+        ON q.id = a.questionId
+      JOIN interview_sessions s
+        ON s.id = q.sessionId
+      WHERE s.userId = ?
+      ORDER BY f.createdAt DESC
+      LIMIT 50
+    `,
+    [userId]
   );
 
   if (rows.length === 0) {

@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const morgan = require('morgan');
 
 const db = require('./config/db');
 const errorHandler = require('./middleware/errorHandler');
@@ -12,6 +13,7 @@ const authRouter = require('./domains/users/auth.router');
 
 app.use(cors());
 app.use(express.json());
+app.use(morgan('dev'));
 
 app.get('/api/health', async (req, res) => {
   try {
