@@ -31,7 +31,7 @@ const EVAL_GUIDE = {
 };
 
 // 질문 생성
-const generateQuestions = async ({ jobId, jobName, questionType }) => {
+const generateQuestions = async ({ jobId, jobName, questionType, userId }) => {
   // jobName이 안 왔으면 jobId로 조회
   if (!jobName) {
     const [jobs] = await pool.query("SELECT jobName FROM jobs WHERE id = ?", [jobId]);
@@ -102,7 +102,7 @@ Rules:
   // DB 저장
   const [sessionResult] = await pool.query(
     "INSERT INTO interview_sessions (userId, jobId, jobName, questionType) VALUES (?, ?, ?, ?)",
-    [null, jobId ?? null, jobName, questionType]
+    [userId ?? null, jobId ?? null, jobName, questionType]
   );
   const sessionId = sessionResult.insertId;
 

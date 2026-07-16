@@ -5,13 +5,19 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 
 // 통계
-const getStats = async () => {
+const getStats = async (userId) => {
   const [sessionRows] = await pool.query(
-    "SELECT COUNT(*) AS totalSessions FROM interview_sessions"
+    "SELECT COUNT(*) AS totalSessions FROM interview_sessions WHERE userId = ?",
+    [userId]
   );
-  const [scoreRows] = await pool.query(
-    "SELECT AVG(score) AS avgScore FROM feedbacks"
-  );
+  const [scoreRows] = await pool.query(`
+    SELECT AVG(f.score) AS avgScore
+    FROM feedbacks f
+    JOIN answers a ON a.id = f.answerId
+    JOIN questions q ON q.id = a.questionId
+    JOIN interview_sessions s ON s.id = q.sessionId
+    WHERE s.userId = ?
+  `, [userId]);
   const [monthRows] = await pool.query(`
     SELECT
       ROUND(AVG(CASE WHEN s.createdAt >= DATE_FORMAT(NOW(), '%Y-%m-01')
@@ -23,7 +29,8 @@ const getStats = async () => {
     JOIN answers a ON a.id = f.answerId
     JOIN questions q ON q.id = a.questionId
     JOIN interview_sessions s ON s.id = q.sessionId
-  `);
+    WHERE s.userId = ?
+  `, [userId]);
   const thisMonth = monthRows[0].thisMonth;
   const lastMonth = monthRows[0].lastMonth;
   const monthlyChange = thisMonth != null && lastMonth != null ? thisMonth - lastMonth : 0;
@@ -36,7 +43,7 @@ const getStats = async () => {
 };
 
 // 최근 이력
-const getHistory = async () => {
+const getHistory = async (userId) => {
   const [rows] = await pool.query(`
     SELECT
       s.id, s.jobName, s.questionType, s.createdAt,
@@ -47,15 +54,16 @@ const getHistory = async () => {
     LEFT JOIN questions q ON q.sessionId = s.id
     LEFT JOIN answers a ON a.questionId = q.id
     LEFT JOIN feedbacks f ON f.answerId = a.id
+    WHERE s.userId = ?
     GROUP BY s.id, s.jobName, s.questionType, s.createdAt, s.smileCount, s.eyeContactRatio
     ORDER BY s.createdAt DESC
     LIMIT 10
-  `);
+  `, [userId]);
   return rows;
 };
 
 // 히트맵
-const getHeatmap = async () => {
+const getHeatmap = async (userId) => {
   const [rows] = await pool.query(`
     SELECT
       DATE_FORMAT(s.createdAt, '%Y-%m-%d') AS date,
@@ -65,17 +73,26 @@ const getHeatmap = async () => {
     LEFT JOIN questions q ON q.sessionId = s.id
     LEFT JOIN answers a ON a.questionId = q.id
     LEFT JOIN feedbacks f ON f.answerId = a.id
+    WHERE s.userId = ?
     GROUP BY DATE_FORMAT(s.createdAt, '%Y-%m-%d')
     ORDER BY date
-  `);
+  `, [userId]);
   return rows;
 };
 
 // 강점·약점 분석
-const getAnalysis = async () => {
-  const [rows] = await pool.query(
-    "SELECT strengths, improvements FROM feedbacks ORDER BY createdAt DESC LIMIT 50"
-  );
+const getAnalysis = async (userId) => {
+  const [rows] = await pool.query(`
+    SELECT f.strengths, f.improvements
+    FROM feedbacks f
+    JOIN answers a ON a.id = f.answerId
+    JOIN questions q ON q.id = a.questionId
+    JOIN interview_sessions s ON s.id = q.sessionId
+    WHERE s.userId = ?
+    ORDER BY f.createdAt DESC
+    LIMIT 50
+  `, [userId]);
+  // ... 아래 (rows.length === 0 확인부터)는 기존 그대로
 
   if (rows.length === 0) {
     return {
