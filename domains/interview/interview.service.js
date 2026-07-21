@@ -32,14 +32,12 @@ const EVAL_GUIDE = {
 
 // 질문 생성
 const generateQuestions = async ({ jobId, jobName, questionType, userId }) => {
-  // jobName이 안 왔으면 jobId로 조회
   if (!jobName) {
     const [jobs] = await pool.query("SELECT jobName FROM jobs WHERE id = ?", [jobId]);
     if (jobs.length === 0) throw new Error("JOB_NOT_FOUND");
     jobName = jobs[0].jobName;
   }
 
-  // 키워드로 관련 NCS 뽑기
   let words = null;
   for (const key in JOB_KEYWORDS) {
     if (jobName.includes(key)) { words = JOB_KEYWORDS[key]; break; }
@@ -82,8 +80,6 @@ Rules:
       });
       let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(text);
-
-      // 유효성 확인: 배열이고, 비어있지 않고, 한자 없어야 통과
       if (Array.isArray(parsed) && parsed.length > 0 && !parsed.some(hasCJK)) {
         questions = parsed;
         break;
@@ -94,12 +90,10 @@ Rules:
     }
   }
 
-  // 3번 다 실패하면 명확한 에러
   if (!questions) {
     throw new Error("QUESTION_GENERATION_FAILED");
   }
 
-  // DB 저장
   const [sessionResult] = await pool.query(
     "INSERT INTO interview_sessions (userId, jobId, jobName, questionType) VALUES (?, ?, ?, ?)",
     [userId ?? null, jobId ?? null, jobName, questionType]
@@ -121,7 +115,7 @@ Rules:
 // 답변 평가
 const evaluateAnswer = async ({ questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio }) => {
   const guide = EVAL_GUIDE[questionType] || EVAL_GUIDE["직무기술형"];
-  const prompt = `You are a Korean interview coach evaluating a candidate's answer.
+  const prompt = `You are a strict Korean interview coach evaluating a candidate's answer.
 
 Question (${questionType}): ${question}
 Candidate's answer: ${answer}
@@ -135,13 +129,19 @@ Return ONLY a JSON object in exactly this shape, all text in Korean:
   "strengths": ["<잘한 점>", "..."],
   "improvements": ["<개선할 점>", "..."],
   "suggestion": "<답변을 어떻게 보완하면 좋을지 2~3문장>",
-  "modelAnswer": "<이 질문에 대한 모범답안 예시. 해당 직무·질문유형에 맞게 3~4문장으로. 경험행동형이면 STAR 구조로 작성>"
+  "modelAnswer": "<이 질문에 대한 모범답안 예시. 지원자 답변이 부실해도 질문에 맞는 이상적인 답을 3~4문장으로. 경험행동형이면 STAR 구조로>"
 }
 
-Rules:
-- Write ALL text in Korean only.
-- Score honestly based on the criteria. Do NOT inflate. A vague or wrong answer should score low.
-- strengths and improvements: 2-3 specific items each, referring to the actual answer.
+Scoring rules (VERY IMPORTANT):
+- Meaningless answers (single characters like "ㅇ", "ㅁ", "asdf", "없음", "모름", repeated characters like "ㅇㅇㅇ", or random text) MUST score 0-5. Do NOT invent strengths for these — leave strengths as an empty array [].
+- Answers under 20 Korean characters with no real content: maximum 25 points.
+- Answers that just repeat the question without adding substance: maximum 30 points.
+- Only give 70+ when the answer has concrete content, specific examples, or clear reasoning that matches the criteria.
+- Do NOT inflate scores. Be strict and honest. A weak answer should clearly score low.
+
+Other rules:
+- Write ALL text in Korean only. Do NOT use Chinese characters.
+- strengths and improvements: 2-3 specific items each that refer to the actual answer. (Exception: for meaningless answers, strengths = [].)
 - Return ONLY the JSON. No markdown, no extra text.`;
 
   let feedback = null;
@@ -154,8 +154,6 @@ Rules:
       });
       let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(text);
-
-      // 유효성 확인: score가 숫자이고, 한자 없어야 통과
       if (typeof parsed.score === "number" && typeof parsed.modelAnswer === "string" && !hasCJK(JSON.stringify(parsed))) {
         feedback = parsed;
         break;
@@ -170,7 +168,6 @@ Rules:
     throw new Error("FEEDBACK_GENERATION_FAILED");
   }
 
-  // DB 저장
   const [answerResult] = await pool.query(
     "INSERT INTO answers (questionId, content) VALUES (?, ?)",
     [questionId ?? null, answer]
@@ -182,7 +179,6 @@ Rules:
     [answerId, feedback.score, JSON.stringify(feedback.strengths), JSON.stringify(feedback.improvements), feedback.suggestion]
   );
 
-  // 카메라 지표 저장 (넘어온 경우만)
   if (sessionId && (smileCount != null || eyeContactRatio != null)) {
     await pool.query(
       "UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?",

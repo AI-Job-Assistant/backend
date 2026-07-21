@@ -5,7 +5,7 @@ async function main() {
     body: JSON.stringify({
   questionId: 26,
   question: "데이터 아키텍처 구축 계획을 수립할 때 기술 참조 모델과 데이터 아키텍처 구성요소를 어떻게 고려하시나요?",
-  answer: "저는 데이터 아키텍처 구축 계획을 수립할 때 기술 참조 모델을 최대한 고려한다.",
+  answer: "o",
   questionType: "직무기술형",
 }),
   });
