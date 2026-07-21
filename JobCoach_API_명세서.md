@@ -1,16 +1,18 @@
 # JobCoach API 명세서
 
 > 프론트엔드 ↔ 백엔드 연동 계약 문서  
-> 최종 업데이트: 2026-07-04 · 작성: 백엔드 A (시현), 백엔드 B (수안)
+> 최종 업데이트: 2026-06-23 · 작성: 백엔드 A (시현)
 
 ---
 
 ## 개요
 
-- **Base URL**: `http://localhost:5000` (배포 후 공용 주소로 교체)
+- **Base URL**: `https://jobcoach-backend-e0yl.onrender.com` (배포 완료 · Render)
+  - 로컬 개발 시엔 `http://localhost:5000`
+  - ⚠️ 무료 플랜이라 15분 미사용 시 서버가 잠듦 → 첫 호출이 30초~1분 느릴 수 있음(정상). 데모 전 미리 한 번 호출해 깨워둘 것.
 - **응답 형식**: JSON
-- **인증**: 현재 미적용. 마이페이지 API는 지금은 전체 데이터 기준으로 응답한다. 추후 JWT 연동 시 userId 기반 개인별 필터 추가 예정 (BE B 담당).
-+ JWT 인증 적용. 로그인/회원가입 성공 시 토큰 발급. 인증이 필요한 API는 `Authorization: Bearer <token>` 헤더 사용.
+- **인증**: **JWT 적용 완료.** 마이페이지 API(stats·history·heatmap·analysis)는 **로그인한 사용자 본인 데이터만** 응답한다. 요청 시 헤더에 `Authorization: Bearer <토큰>` 필수 (없으면 401).
+  - ⚠️ **중요**: 면접 API(질문 생성·답변 평가)도 **토큰을 함께 보내야** 세션에 `userId`가 저장되고, 그래야 마이페이지에 기록이 뜬다. 토큰 없이 면접을 보면 `userId: null`로 저장되어 마이페이지에 안 나타남.
 
 ## 공통 Enum
 
@@ -83,9 +85,15 @@ DB에 없는 AI 직무는 `jobName`으로:
   "questionId": 1,
   "question": "질문 내용",
   "answer": "사용자 답변",
-  "questionType": "직무기술형"
+  "questionType": "직무기술형",
+  "sessionId": 1,
+  "smileCount": 5,
+  "eyeContactRatio": 0.7
 }
 ```
+
+- `sessionId`·`smileCount`·`eyeContactRatio`: **스피킹(카메라) 면접에서만** 함께 전송. 보내면 해당 세션에 카메라 지표가 저장됨. 텍스트 면접은 생략 가능(저장 단계 자동 skip).
+- `eyeContactRatio`: 0~1 사이 소수 (예: 0.7 = 70%)
 
 **응답 200**
 
@@ -96,11 +104,13 @@ DB에 없는 AI 직무는 `jobName`으로:
   "score": 60,
   "strengths": ["잘한 점 1", "잘한 점 2"],
   "improvements": ["개선점 1", "개선점 2", "개선점 3"],
-  "suggestion": "보완 방향 제안..."
+  "suggestion": "보완 방향 제안...",
+  "modelAnswer": "이 질문에 대한 모범답안 예시 (3~4문장, 경험행동형이면 STAR 구조)"
 }
 ```
 
 - `score`: 0~100 (숫자형)
+- `modelAnswer`: 해당 질문의 모범답안 예시. 사용자 답변이 부실해도 질문 기반으로 이상적인 답을 생성 → "이렇게 답하면 좋다"를 보여주는 용도. 화면에 접기/펼치기로 표시 권장.
 
 ---
 
@@ -142,13 +152,17 @@ DB에 없는 AI 직무는 `jobName`으로:
     "questionType": "직무기술형",
     "createdAt": "2026-06-22T09:13:41.000Z",
     "avgScore": "60",
-    "durationMin": 4
+    "durationMin": 4,
+    "smileCount": 5,
+    "eyeContactRatio": "0.700"
   }
 ]
 ```
 
 - `durationMin`: 면접 시작(질문 생성)부터 마지막 답변 제출까지 걸린 시간 (분, 숫자형)
-- ⚠️ `avgScore`는 **문자열**("60")로 옴 → 프론트에서 `Number()` 변환 필요
+- `smileCount`: 면접 중 웃음 횟수 (숫자형). 스피킹(카메라) 면접에서만 측정 → 텍스트 면접은 `0`
+- `eyeContactRatio`: 카메라 응시율 (문자열 "0.700" = 70%) → 프론트에서 `Number()` 변환 후 ×100. 텍스트 면접은 `0`
+- ⚠️ `avgScore`·`eyeContactRatio`는 **문자열**로 옴 → `Number()` 변환 필요
 - ⚠️ 질문만 생성하고 답변을 안 한 세션은 `avgScore`·`durationMin`이 **`null`** 일 수 있음 → 프론트에서 방어 처리(예: "기록 없음" 표시)
 
 ---
@@ -221,192 +235,6 @@ DB에 없는 AI 직무는 `jobName`으로:
 
 ---
 
-## 8. 회원가입
-
-**POST** `/api/auth/signup`
-
-학번, 이름, 학과, 이메일, 비밀번호를 입력받아 회원 정보를 저장하고 JWT 토큰을 발급한다.
-
-**요청 Body**
-
-```json
-{
-  "studentId": "20241234",
-  "name": "홍길동",
-  "departmentId": 1,
-  "email": "20241234@sungshin.ac.kr",
-  "password": "12345678"
-}
-```
-
-- `studentId`: 학번, 8자리 숫자
-- `name`: 사용자 이름
-- `departmentId`: 학과 ID
-- `email`: 이메일
-- `password`: 비밀번호, 8자 이상
-
-**응답 201**
-
-```json
-{
-  "success": true,
-  "data": {
-    "token": "eyJ...",
-    "user": {
-      "id": 1,
-      "studentId": "20241234",
-      "name": "홍길동",
-      "email": "20241234@sungshin.ac.kr",
-      "departmentId": 1
-    }
-  }
-}
-```
-
-**에러**
-
-필수 입력값 누락:
-
-```json
-{
-  "success": false,
-  "error": "필수 입력값이 누락되었습니다."
-}
-```
-
-학번 형식 오류:
-
-```json
-{
-  "success": false,
-  "error": "학번은 8자리 숫자여야 합니다."
-}
-```
-
-비밀번호 길이 오류:
-
-```json
-{
-  "success": false,
-  "error": "비밀번호는 8자 이상이어야 합니다."
-}
-```
-
-이미 사용 중인 학번:
-
-```json
-{
-  "success": false,
-  "error": "이미 사용 중인 학번입니다."
-}
-```
-
----
-
-## 9. 로그인
-
-**POST** `/api/auth/login`
-
-학번과 비밀번호로 로그인하고 JWT 토큰을 발급한다.
-
-**요청 Body**
-
-```json
-{
-  "studentId": "20241234",
-  "password": "12345678"
-}
-```
-
-**응답 200**
-
-```json
-{
-  "success": true,
-  "data": {
-    "token": "eyJ...",
-    "user": {
-      "id": 1,
-      "studentId": "20241234",
-      "name": "홍길동",
-      "email": "20241234@sungshin.ac.kr",
-      "departmentId": 1
-    }
-  }
-}
-```
-
-**에러**
-
-학번 또는 비밀번호 누락:
-
-```json
-{
-  "success": false,
-  "error": "학번과 비밀번호를 입력해주세요."
-}
-```
-
-학번이 없거나 비밀번호가 틀린 경우:
-
-```json
-{
-  "success": false,
-  "error": "학번 또는 비밀번호가 올바르지 않습니다."
-}
-```
-
----
-
-## 10. 내 정보 조회
-
-**GET** `/api/users/me`
-
-JWT 토큰을 검증한 뒤 로그인한 사용자의 정보를 반환한다.
-
-**요청 Header**
-
-```http
-Authorization: Bearer <token>
-```
-
-**응답 200**
-
-```json
-{
-  "success": true,
-  "data": {
-    "id": 1,
-    "studentId": "20241234",
-    "name": "홍길동",
-    "email": "20241234@sungshin.ac.kr",
-    "departmentId": 1
-  }
-}
-```
-
-**에러**
-
-토큰이 없거나 형식이 잘못된 경우:
-
-```json
-{
-  "success": false,
-  "error": "No token"
-}
-```
-
-토큰이 유효하지 않은 경우:
-
-```json
-{
-  "success": false,
-  "error": "Invalid token"
-}
-```
-
----
-
 ## 프론트 연동 참고사항
 
 1. **질문 생성** — DB 직무는 `jobId`, AI 직무(AI 엔지니어·머신러닝 엔지니어·AI 서비스 기획자 등)는 `jobName`으로 보낸다.
@@ -415,11 +243,8 @@ Authorization: Bearer <token>
 4. **questionType은 Enum과 정확히 일치** (Figma 표기와 다름).
 5. **면접 흐름**: 질문 생성(`sessionId`·`questionId` 받기) → 답변 입력 → 답변 평가(`questionId`로 제출) → 결과 표시 → 마이페이지 누적.
 6. **강점·약점 분석**은 AI 호출이라 1~3초 지연 가능 → 로딩 표시. `hasData: false`면 분석 영역 숨김 처리.
-7. **마이페이지 개인화 미적용** — 현재 stats·history·heatmap·analysis는 전체 데이터 기준. 로그인 연동(BE B) 후 개인별로 바뀔 예정.
+7. **마이페이지 개인화 완료** — stats·history·heatmap·analysis는 **로그인한 본인 데이터만** 응답. 모든 마이페이지 요청에 `Authorization: Bearer <토큰>` 헤더 필수. **면접 API(질문 생성·답변 평가)에도 토큰을 보내야** 세션에 userId가 저장되어 마이페이지에 뜬다.
 8. **프로필 영역**(데이터 분석가·신입·가입 N개월차)은 회원 정보라 **BE B 회원 API** 담당. 이 문서 범위 밖.
-->  기본 회원 정보는 `GET /api/users/me`에서 조회한다. 데이터 분석가·신입·가입 N개월차 등 추가 프로필 정보는 추후 확장 예정.
-9. **회원가입/로그인 토큰 처리** — `POST /api/auth/signup`, `POST /api/auth/login` 성공 시 `data.token`을 저장한다.
-10. **인증 API 호출** — `GET /api/users/me` 같은 인증 필요 API는 Header에 `Authorization: Bearer <token>`을 포함해야 한다.
 
 ---
 
