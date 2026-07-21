@@ -1,2 +1,6 @@
 node_modules/
+# 테스트/확인용 스크립트 (배포 불필요)
+test_*.js
+check_*.js
+setup_*.js
 .env
