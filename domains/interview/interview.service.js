@@ -31,7 +31,7 @@ const EVAL_GUIDE = {
 };
 
 // 질문 생성
-const generateQuestions = async ({ jobId, jobName, questionType, userId, interviewStyle }) => {
+const generateQuestions = async ({ jobId, jobName, questionType, userId, interviewStyle, count }) => {
   if (!jobName) {
     const [jobs] = await pool.query("SELECT jobName FROM jobs WHERE id = ?", [jobId]);
     if (jobs.length === 0) throw new Error("JOB_NOT_FOUND");
@@ -60,19 +60,24 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
 
   const skillText = skills.map((s) => `- ${s.unitName}: ${s.knowledge}`).join("\n");
   const guide = TYPE_GUIDE[questionType] || TYPE_GUIDE["직무기술형"];
+
+  // 도전모드면 1개, 아니면 5개
+  const numQuestions = (count === 1) ? 1 : 5;
+
+  // 압박 면접이면 프롬프트에 압박 스타일 지시 추가
   const styleInstruction = interviewStyle === "압박"
     ? `\nThis is a PRESSURE interview. Make the questions more challenging, probing, and demanding. Push the candidate to justify their reasoning and defend their choices. Stay professional and polite, but be firm and rigorous.`
     : "";
 
   const prompt = `You are a Korean job interviewer for the role of "${jobName}".
-Generate exactly 5 interview questions.
+Generate exactly ${numQuestions} interview questions.
 Question type: ${guide}${styleInstruction}
 Ground the questions in these NCS competencies:
 ${skillText}
 
 Rules:
-- Write ALL questions in Korean Hangul only. Do NOT use any Chinese characters (漢字).
-- Return ONLY a JSON array of 5 strings, nothing else.`;
+- Write ALL questions in Korean Hangul only. Do NOT use any Chinese characters.
+- Return ONLY a JSON array of ${numQuestions} strings, nothing else.`;
 
   let questions = null;
   for (let i = 0; i < 3; i++) {
