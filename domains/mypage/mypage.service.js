@@ -7,16 +7,16 @@ const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 // 통계
 const getStats = async (userId) => {
   const [sessionRows] = await pool.query(
-    "SELECT COUNT(*) AS totalSessions FROM interview_sessions WHERE userId = ?",
-    [userId]
-  );
+  "SELECT COUNT(*) AS totalSessions FROM interview_sessions WHERE userId = ? AND mode != '도전'",
+  [userId]
+);
   const [scoreRows] = await pool.query(`
     SELECT AVG(f.score) AS avgScore
     FROM feedbacks f
     JOIN answers a ON a.id = f.answerId
     JOIN questions q ON q.id = a.questionId
     JOIN interview_sessions s ON s.id = q.sessionId
-    WHERE s.userId = ?
+    WHERE s.userId = ? AND s.mode != '도전'
   `, [userId]);
   const [monthRows] = await pool.query(`
     SELECT
@@ -29,7 +29,7 @@ const getStats = async (userId) => {
     JOIN answers a ON a.id = f.answerId
     JOIN questions q ON q.id = a.questionId
     JOIN interview_sessions s ON s.id = q.sessionId
-    WHERE s.userId = ?
+    WHERE s.userId = ? AND s.mode != '도전'
   `, [userId]);
   const thisMonth = monthRows[0].thisMonth;
   const lastMonth = monthRows[0].lastMonth;

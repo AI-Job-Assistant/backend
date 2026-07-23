@@ -4,7 +4,7 @@ const VALID_TYPES = ["경험행동형", "직무기술형", "상황판단형"];
 
 const generateQuestions = async (req, res) => {
   try {
-    const { jobId, jobName, questionType, interviewStyle, count } = req.body;
+    const { jobId, jobName, questionType, interviewStyle, count, mode } = req.body;
     const userId = req.user?.id ?? null;
 
     if (!jobId && !jobName) {
@@ -14,7 +14,7 @@ const generateQuestions = async (req, res) => {
       return res.status(400).json({ error: "questionType이 올바르지 않습니다. (경험행동형/직무기술형/상황판단형)" });
     }
 
-    const result = await interviewService.generateQuestions({ jobId, jobName, questionType, userId, interviewStyle, count });
+    const result = await interviewService.generateQuestions({ jobId, jobName, questionType, userId, interviewStyle, count, mode });
     res.json(result);
   } catch (err) {
     if (err.message === "JOB_NOT_FOUND") {

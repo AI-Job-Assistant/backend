@@ -31,7 +31,7 @@ const EVAL_GUIDE = {
 };
 
 // 질문 생성
-const generateQuestions = async ({ jobId, jobName, questionType, userId, interviewStyle, count }) => {
+const generateQuestions = async ({ jobId, jobName, questionType, userId, interviewStyle, count, mode }) => {
   if (!jobName) {
     const [jobs] = await pool.query("SELECT jobName FROM jobs WHERE id = ?", [jobId]);
     if (jobs.length === 0) throw new Error("JOB_NOT_FOUND");
@@ -63,6 +63,7 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
 
   // 도전모드면 1개, 아니면 5개
   const numQuestions = (count === 1) ? 1 : 5;
+  const sessionMode = (mode === "도전" || count === 1) ? "도전" : "일반";   // ← 추가
 
   // 압박 면접이면 프롬프트에 압박 스타일 지시 추가
   const styleInstruction = interviewStyle === "압박"
@@ -104,8 +105,8 @@ Rules:
   }
 
   const [sessionResult] = await pool.query(
-    "INSERT INTO interview_sessions (userId, jobId, jobName, questionType) VALUES (?, ?, ?, ?)",
-    [userId ?? null, jobId ?? null, jobName, questionType]
+    "INSERT INTO interview_sessions (userId, jobId, jobName, questionType, mode) VALUES (?, ?, ?, ?, ?)",
+    [userId ?? null, jobId ?? null, jobName, questionType, sessionMode]
   );
   const sessionId = sessionResult.insertId;
 
