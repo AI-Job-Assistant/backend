@@ -7,21 +7,21 @@ const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 const TYPE_GUIDE = {
   "경험행동형": "지원자의 과거 경험과 행동을 묻는 질문 (예: ~한 경험을 말해보세요)",
   "직무기술형": "직무 지식과 기술 역량을 확인하는 질문",
-  "상황판단형": "구체적인 문제 상황이나 딜레마를 시나리오로 먼저 제시한 뒤, '이런 상황이라면 어떻게 판단하고 대응하겠는가'를 묻는 질문. 출시 일정 압박, 우선순위 충돌, 장애 대응 같은 상황을 가정하고 의사결정을 물을 것.",
+  "상황판단형": "구체적인 문제 상황이나 딜레마를 시나리오로 먼저 제시한 뒤, '이런 상황이라면 어떻게 판단하고 대응하겠는가'를 묻는 질문.",
 };
 
 const JOB_KEYWORDS = {
-  "데이터":     ["데이터"],
-  "인공지능":   ["인공지능"],
-  "AI":         ["인공지능"],
-  "머신러닝":   ["인공지능"],
-  "딥러닝":     ["인공지능"],
-  "게임":       ["게임"],
-  "시스템":     ["시스템"],
+  "데이터": ["데이터"],
+  "인공지능": ["인공지능"],
+  "AI": ["인공지능"],
+  "머신러닝": ["인공지능"],
+  "딥러닝": ["인공지능"],
+  "게임": ["게임"],
+  "시스템": ["시스템"],
   "소프트웨어": ["소프트웨어"],
-  "백엔드":     ["소프트웨어"],
-  "보안":       ["보안", "정보보호"],
-  "네트워크":   ["네트워크"],
+  "백엔드": ["소프트웨어"],
+  "보안": ["보안", "정보보호"],
+  "네트워크": ["네트워크"],
 };
 
 const EVAL_GUIDE = {
@@ -53,34 +53,56 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
     );
   }
   if (skills.length === 0) {
-    [skills] = await pool.query(
-      "SELECT unitName, knowledge FROM ncs_skills ORDER BY RAND() LIMIT 6"
-    );
+    [skills] = await pool.query("SELECT unitName, knowledge FROM ncs_skills ORDER BY RAND() LIMIT 6");
   }
 
   const skillText = skills.map((s) => `- ${s.unitName}: ${s.knowledge}`).join("\n");
   const guide = TYPE_GUIDE[questionType] || TYPE_GUIDE["직무기술형"];
 
-  // 도전모드면 1개, 아니면 5개
   const numQuestions = (count === 1) ? 1 : 5;
   const sessionMode =
     (mode === "도전" || count === 1) ? "도전"
     : (mode === "스피킹") ? "스피킹"
     : "텍스트";
 
-  // 압박 면접이면 프롬프트에 압박 스타일 지시 추가
   const styleInstruction = interviewStyle === "압박"
-    ? `\nThis is a PRESSURE interview. Make the questions more challenging, probing, and demanding. Push the candidate to justify their reasoning and defend their choices. Stay professional and polite, but be firm and rigorous.`
+    ? `
+
+PRESSURE MODE (this overrides the neutral tone above):
+Every question must challenge the candidate, not just ask for information.
+Each question MUST do one of these:
+- Question their judgment: "그 판단이 옳았다고 보시나요?"
+- Assume failure: "그 방법이 실패했다면 어떻게 하시겠어요?"
+- Demand justification: "왜 하필 그 방식을 선택하셨나요?"
+- Present opposition: "팀에서 반대했다면 어떻게 설득하시겠어요?"
+- Point out a weakness: "그 접근의 한계는 무엇이라고 보시나요?"
+Never write a neutral "~는 무엇인가요?" question in this mode.
+Keep 존댓말. Never 반말 or fragments.`
     : "";
 
-  const prompt = `You are a Korean job interviewer for the role of "${jobName}".
+  const prompt = `You are an experienced Korean job interviewer conducting a real interview for the role of "${jobName}".
 Generate exactly ${numQuestions} interview questions.
-Question type: ${guide}${styleInstruction}
-Ground the questions in these NCS competencies:
+Question type: ${guide}
+
+Background knowledge (use as inspiration only, NEVER quote directly):
 ${skillText}
 
-Rules:
-- Write ALL questions in Korean Hangul only. Do NOT use any Chinese characters.
+CRITICAL WRITING RULES — follow these strictly, they override everything above:
+1. Write like a real interviewer speaking face-to-face. NOT like a written exam or certification test.
+2. NEVER put standard names or acronyms in the question: ISO/IEC, ITIL, SLM, ISMS-P, BSC, SPI, CRUD, ETL. These make it sound like a textbook.
+3. NEVER copy phrases from the background knowledge above. Absorb the idea, then ask in your own natural words.
+4. NEVER end with "설명해 주십시오" / "기술해 주십시오" / "제시해 주십시오". End conversationally: "~있나요?", "~궁금합니다", "~말씀해 주세요", "~어떻게 하시겠어요?".
+5. ONE topic per question. Never use "~하고, ~하는지" to stack two topics.
+6. Under 60 Korean characters. Complete polite sentences (존댓말), never 반말.
+
+Target style:
+- "데이터 품질 때문에 곤란했던 경험이 있나요?"
+- "대용량 로그를 수집한다면 어디서부터 시작하시겠어요?"
+- "분석 결과를 비전문가에게 설명해야 했던 적이 있는지 궁금합니다."
+${styleInstruction}
+
+Output:
+- Korean Hangul only. No Chinese characters.
 - Return ONLY a JSON array of ${numQuestions} strings, nothing else.`;
 
   let questions = null;
@@ -89,7 +111,7 @@ Rules:
       const completion = await groq.chat.completions.create({
         model: "llama-3.3-70b-versatile",
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.7,
+        temperature: 0.5,
       });
       let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(text);
@@ -103,9 +125,7 @@ Rules:
     }
   }
 
-  if (!questions) {
-    throw new Error("QUESTION_GENERATION_FAILED");
-  }
+  if (!questions) throw new Error("QUESTION_GENERATION_FAILED");
 
   const [sessionResult] = await pool.query(
     "INSERT INTO interview_sessions (userId, jobId, jobName, questionType, mode) VALUES (?, ?, ?, ?, ?)",
@@ -208,7 +228,6 @@ Other rules:
     }
   }
 
-  // Groq가 3번 다 실패해도 앱이 멈추지 않도록 기본 피드백 반환
   if (!feedback) {
     console.log("⚠️ Groq 3회 실패 → 기본 피드백으로 대체");
     feedback = {
