@@ -46,7 +46,7 @@ const getStats = async (userId) => {
 const getHistory = async (userId) => {
   const [rows] = await pool.query(`
     SELECT
-      s.id, s.jobName, s.questionType, s.createdAt,
+      s.id, s.jobName, s.questionType, s.mode, s.createdAt,
       ROUND(AVG(f.score)) AS avgScore,
       TIMESTAMPDIFF(MINUTE, s.createdAt, MAX(a.createdAt)) AS durationMin,
       s.smileCount, s.eyeContactRatio
@@ -55,7 +55,7 @@ const getHistory = async (userId) => {
     LEFT JOIN answers a ON a.questionId = q.id
     LEFT JOIN feedbacks f ON f.answerId = a.id
     WHERE s.userId = ?
-    GROUP BY s.id, s.jobName, s.questionType, s.createdAt, s.smileCount, s.eyeContactRatio
+    GROUP BY s.id, s.jobName, s.questionType, s.mode, s.createdAt, s.smileCount, s.eyeContactRatio
     ORDER BY s.createdAt DESC
     LIMIT 10
   `, [userId]);
