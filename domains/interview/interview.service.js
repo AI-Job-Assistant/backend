@@ -63,7 +63,10 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
 
   // 도전모드면 1개, 아니면 5개
   const numQuestions = (count === 1) ? 1 : 5;
-  const sessionMode = (mode === "도전" || count === 1) ? "도전" : "일반";   // ← 추가
+  const sessionMode =
+    (mode === "도전" || count === 1) ? "도전"
+    : (mode === "스피킹") ? "스피킹"
+    : "텍스트";
 
   // 압박 면접이면 프롬프트에 압박 스타일 지시 추가
   const styleInstruction = interviewStyle === "압박"

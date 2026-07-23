@@ -9,7 +9,7 @@ const getJobs = async () => {
 
 const getDepartments = async () => {
   const [rows] = await pool.query(
-    "SELECT MIN(id) AS id, deptName FROM departments GROUP BY deptName ORDER BY deptName"
+    "SELECT MIN(id) AS id, deptName FROM departments GROUP BY deptName ORDER BY id"
   );
   return rows;
 };
