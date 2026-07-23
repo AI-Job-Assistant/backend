@@ -127,6 +127,37 @@ Rules:
 
 // 답변 평가
 const evaluateAnswer = async ({ questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio }) => {
+  // 빈 답변은 Groq 호출 없이 0점 처리
+  if (!answer || answer.trim().length === 0) {
+    const emptyFeedback = {
+      score: 0,
+      strengths: [],
+      improvements: ["답변을 입력하지 않았습니다.", "시간 내에 답변을 작성하는 연습이 필요합니다."],
+      suggestion: "이 질문에 답변하지 않았습니다. 짧더라도 자신의 생각을 정리해 답변해 보세요.",
+      modelAnswer: "답변이 없어 모범답안을 제공하지 않습니다.",
+    };
+
+    const [r] = await pool.query(
+      "INSERT INTO answers (questionId, content) VALUES (?, ?)",
+      [questionId ?? null, ""]
+    );
+    const emptyAnswerId = r.insertId;
+
+    await pool.query(
+      "INSERT INTO feedbacks (answerId, score, strengths, improvements, suggestion) VALUES (?, ?, ?, ?, ?)",
+      [emptyAnswerId, 0, JSON.stringify([]), JSON.stringify(emptyFeedback.improvements), emptyFeedback.suggestion]
+    );
+
+    if (sessionId && (smileCount != null || eyeContactRatio != null)) {
+      await pool.query(
+        "UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?",
+        [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]
+      );
+    }
+
+    return { answerId: emptyAnswerId, questionType, ...emptyFeedback };
+  }
+
   const guide = EVAL_GUIDE[questionType] || EVAL_GUIDE["직무기술형"];
   const prompt = `You are a strict Korean interview coach evaluating a candidate's answer.
 
@@ -177,8 +208,16 @@ Other rules:
     }
   }
 
+  // Groq가 3번 다 실패해도 앱이 멈추지 않도록 기본 피드백 반환
   if (!feedback) {
-    throw new Error("FEEDBACK_GENERATION_FAILED");
+    console.log("⚠️ Groq 3회 실패 → 기본 피드백으로 대체");
+    feedback = {
+      score: 0,
+      strengths: [],
+      improvements: ["AI 분석이 일시적으로 지연되었습니다. 다시 시도해 주세요."],
+      suggestion: "일시적인 오류로 상세 피드백을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      modelAnswer: "일시적인 오류로 모범답안을 생성하지 못했습니다.",
+    };
   }
 
   const [answerResult] = await pool.query(

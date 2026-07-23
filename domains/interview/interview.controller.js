@@ -32,9 +32,7 @@ const evaluateAnswer = async (req, res) => {
   try {
     const { answer, questionType } = req.body;
 
-    if (!answer || answer.trim().length === 0) {
-      return res.status(400).json({ error: "답변이 비어 있습니다." });
-    }
+  
     if (!VALID_TYPES.includes(questionType)) {
       return res.status(400).json({ error: "questionType이 올바르지 않습니다." });
     }
