@@ -31,7 +31,7 @@ const EVAL_GUIDE = {
 };
 
 // 질문 생성
-const generateQuestions = async ({ jobId, jobName, questionType, userId, interviewStyle, count, mode }) => {
+const generateQuestions = async ({ jobId, jobName, questionType, userId, interviewStyle, count, mode, sessionType }) => {
   if (!jobName) {
     const [jobs] = await pool.query("SELECT jobName FROM jobs WHERE id = ?", [jobId]);
     if (jobs.length === 0) throw new Error("JOB_NOT_FOUND");
@@ -59,9 +59,10 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
   const skillText = skills.map((s) => `- ${s.unitName}: ${s.knowledge}`).join("\n");
   const guide = TYPE_GUIDE[questionType] || TYPE_GUIDE["직무기술형"];
 
-  const numQuestions = (count === 1) ? 1 : 5;
+  const isChallenge = (sessionType === "challenge" || mode === "도전" || count === 1);
+  const numQuestions = isChallenge ? 1 : 5;
   const sessionMode =
-    (mode === "도전" || count === 1) ? "도전"
+    isChallenge ? "도전"
     : (mode === "스피킹") ? "스피킹"
     : "텍스트";
 
