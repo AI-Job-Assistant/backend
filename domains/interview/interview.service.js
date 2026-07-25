@@ -147,7 +147,7 @@ Output:
 };
 
 // 답변 평가
-const evaluateAnswer = async ({ questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio }) => {
+const evaluateAnswer = async ({ questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio, extraTimeUsed }) => {
   // 빈 답변은 Groq 호출 없이 0점 처리
   if (!answer || answer.trim().length === 0) {
     const emptyFeedback = {
@@ -240,6 +240,16 @@ Other rules:
     };
   }
 
+  // 추가 시간 사용 시 감점 (한 번당 3점, 최대 2번)
+  const penalty = Math.min(extraTimeUsed ?? 0, 2) * 3;
+  if (penalty > 0) {
+    feedback.score = Math.max(0, feedback.score - penalty);
+    feedback.improvements = [
+      ...feedback.improvements,
+      `추가 시간을 ${Math.min(extraTimeUsed, 2)}회 사용하여 ${penalty}점 감점되었습니다.`,
+    ];
+  }
+  
   const [answerResult] = await pool.query(
     "INSERT INTO answers (questionId, content) VALUES (?, ?)",
     [questionId ?? null, answer]
