@@ -271,4 +271,16 @@ Other rules:
   return { answerId, questionType, ...feedback };
 };
 
-module.exports = { generateQuestions, evaluateAnswer };
+// 면접 완료 처리 (제출하기 버튼)
+const completeSession = async ({ sessionId, userId }) => {
+  const [result] = await pool.query(
+    "UPDATE interview_sessions SET completed = TRUE WHERE id = ? AND userId = ?",
+    [sessionId, userId]
+  );
+  if (result.affectedRows === 0) {
+    throw new Error("SESSION_NOT_FOUND");
+  }
+  return { sessionId, completed: true };
+};
+
+module.exports = { generateQuestions, evaluateAnswer, completeSession };

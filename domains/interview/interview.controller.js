@@ -45,4 +45,22 @@ const evaluateAnswer = async (req, res) => {
   }
 };
 
-module.exports = { generateQuestions, evaluateAnswer };
+const completeSession = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const userId = req.user?.id ?? null;
+    if (!sessionId) {
+      return res.status(400).json({ error: "sessionId가 필요합니다." });
+    }
+    const result = await interviewService.completeSession({ sessionId, userId });
+    res.json(result);
+  } catch (err) {
+    if (err.message === "SESSION_NOT_FOUND") {
+      return res.status(404).json({ error: "세션을 찾을 수 없습니다." });
+    }
+    console.error(err);
+    res.status(500).json({ error: "면접 완료 처리에 실패했습니다." });
+  }
+};
+
+module.exports = { generateQuestions, evaluateAnswer, completeSession };
