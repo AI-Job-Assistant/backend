@@ -234,8 +234,7 @@ Return ONLY a JSON object in exactly this shape, all text in Korean:
   "strengths": ["<잘한 점>", "..."],
   "improvements": ["<개선할 점>", "..."],
   "suggestion": "<답변을 어떻게 보완하면 좋을지 2~3문장>",
-  "modelAnswer": "<이 질문에 대한 모범답안. 질문이 '경험행동형'인 경우 반드시 [상황], [과제], [행동], [결과] (STAR) 태그를 명시하여 작성할 것. 예: [상황] ... [과제] ... [행동] ... [결과] ...>"
-}
+  "modelAnswer": "<이 질문에 대한 모범답안. 지원자가 실제로 면접에서 말하듯 1인칭으로 자연스럽게 작성. [상황][과제][행동][결과] STAR 태그를 붙이되, 각 부분을 '~했습니다', '~였습니다' 같은 자연스러운 존댓말 경험담으로. 당위(~해야 합니다)가 아니라 실제 경험처럼. 영어 단어 금지(예: trade-off→절충). 각 태그당 1~2문장.>"
 
 Scoring rules (VERY IMPORTANT - MAX SCORE IS 20 POINTS):
 - Meaningless answers (single characters like "ㅇ", "ㅁ", "asdf", "없음", "모름", repeated characters like "ㅇㅇㅇ", or random text) MUST score exactly 0. Do NOT invent strengths for these — leave strengths as an empty array [].
