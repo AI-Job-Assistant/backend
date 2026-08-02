@@ -133,7 +133,7 @@ Output:
   for (let i = 0; i < 3; i++) {
     try {
       const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: "llama-3.1-8b-instant",   // 질문 생성도 8b (70b 토큰 한도 회피)
         messages: [{ role: "user", content: prompt }],
         temperature: 0.5,
       });
