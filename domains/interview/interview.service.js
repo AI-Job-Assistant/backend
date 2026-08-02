@@ -234,7 +234,8 @@ Return ONLY a JSON object in exactly this shape, all text in Korean:
 }
 
 Scoring rules (VERY IMPORTANT - MAX SCORE IS 20 POINTS):
-- Meaningless answers (single characters like "ㅇ", "ㅁ", "asdf", "없음", "모름", repeated characters like "ㅇㅇㅇ", or random text) MUST score 0-1. Do NOT invent strengths for these — leave strengths as an empty array [].
+- Meaningless answers (single characters like "ㅇ", "ㅁ", "asdf", "없음", "모름", repeated characters like "ㅇㅇㅇ", or random text) MUST score exactly 0. Do NOT invent strengths for these — leave strengths as an empty array [].
+- Generic filler answers with no real content (e.g. "열심히 하겠습니다", "최선을 다하겠습니다", "잘하겠습니다", "노력하겠습니다") MUST score exactly 0. Effort statements without concrete substance are NOT valid answers. strengths must be [].
 - Answers under 20 Korean characters with no real content: maximum 5 points.
 - Answers that just repeat the question without adding substance: maximum 6 points.
 - Only give 14-20 when the answer has concrete content, specific examples, or clear reasoning that matches the criteria.
@@ -249,7 +250,7 @@ Other rules:
   for (let i = 0; i < 3; i++) {
     try {
       const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: "llama-3.1-8b-instant",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
       });
