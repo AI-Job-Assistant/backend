@@ -132,15 +132,29 @@ Rules: Korean only, no Chinese characters. Return ONLY the JSON.`;
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
       });
-      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
+      
+      const rawText = completion.choices[0].message.content;
+      
+      // 💡 안전한 JSON 객체 extraction 로직 추가
+      let text = rawText;
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) {
+        text = match[0];
+      } else {
+        text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+      }
+
       const parsed = JSON.parse(text);
       if (parsed.topStrengths && parsed.topWeaknesses && !hasCJK(JSON.stringify(parsed))) {
         return parsed;
       }
+      console.log(`분석 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
       console.log(`분석 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+      console.error("에러 내용:", err.message);
     }
   }
+  
   // Groq 실패 시 (토큰 한도 등) — "기록 없음"이 아니라 일시 오류로 안내
   return {
     topStrengths: [],
