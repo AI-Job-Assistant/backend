@@ -141,7 +141,12 @@ Rules: Korean only, no Chinese characters. Return ONLY the JSON.`;
       console.log(`분석 재시도 ${i + 1}회 (JSON 파싱 실패)`);
     }
   }
-  throw new Error("ANALYSIS_GENERATION_FAILED");
+  // Groq 실패 시 (토큰 한도 등) — "기록 없음"이 아니라 일시 오류로 안내
+  return {
+    topStrengths: [],
+    topWeaknesses: [],
+    summary: "AI 분석을 일시적으로 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+  };
 };
 
 module.exports = { getStats, getHistory, getHeatmap, getAnalysis };

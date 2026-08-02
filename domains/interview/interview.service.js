@@ -30,6 +30,25 @@ const EVAL_GUIDE = {
   "상황판단형": `Evaluate judgment and reasoning. Check if the answer analyzes the situation, weighs options, justifies the decision, and considers consequences/stakeholders.`,
 };
 
+// AI Hub 실제 IT 채용면접 질문 (few-shot 예시)
+const FEWSHOT = {
+  "직무기술형": [
+    "테스트 코드를 짜야 하는 이유에 관해서 말씀해 주세요.",
+    "본인께서는 개발 능력 향상을 위해 어떤 것을 하고 계신가요?",
+    "고객이 개발 기간을 촉박하게 요구하는 경우라면 어떻게 대응하시겠습니까?",
+  ],
+  "경험행동형": [
+    "지금까지 살아오면서 가장 힘들었던 경험은 무엇이고, 그것을 어떻게 극복하셨는지 궁금합니다.",
+    "어떤 목표를 세워서 달성했던 경험이 있으신가요?",
+    "새로운 환경에서 전혀 몰랐던 일을 맡아본 경험이 있으시다면 소개해 주세요.",
+  ],
+  "상황판단형": [
+    "업무 중 스케줄에 없던 일이 생기는 상황이 발생한다면 어떻게 대처하시겠어요?",
+    "고객의 요구사항이 팀 역량을 넘어선다면 어떻게 판단하시겠습니까?",
+    "촉박한 일정과 품질 중 하나를 택해야 한다면 어느 쪽을 우선하시겠어요?",
+  ],
+};
+
 // 질문 생성
 const generateQuestions = async ({ jobId, jobName, questionType, userId, interviewStyle, count, mode, sessionType }) => {
   if (!jobName) {
@@ -58,6 +77,8 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
 
   const skillText = skills.map((s) => `- ${s.unitName}: ${s.knowledge}`).join("\n");
   const guide = TYPE_GUIDE[questionType] || TYPE_GUIDE["직무기술형"];
+  const examples = FEWSHOT[questionType] || FEWSHOT["직무기술형"];
+  const fewshotText = examples.map((q) => `- ${q}`).join("\n");
 
   const isChallenge = (sessionType === "challenge" || mode === "도전" || count === 1);
   const numQuestions = isChallenge ? 1 : 5;
@@ -96,10 +117,8 @@ CRITICAL WRITING RULES — follow these strictly, they override everything above
 5. ONE topic per question. Never use "~하고, ~하는지" to stack two topics.
 6. Under 60 Korean characters. Complete polite sentences (존댓말), never 반말.
 
-Target style:
-- "데이터 품질 때문에 곤란했던 경험이 있나요?"
-- "대용량 로그를 수집한다면 어디서부터 시작하시겠어요?"
-- "분석 결과를 비전문가에게 설명해야 했던 적이 있는지 궁금합니다."
+Real interview questions of this type (match this natural spoken tone):
+${fewshotText}
 ${styleInstruction}
 
 Output:
@@ -114,7 +133,19 @@ Output:
         messages: [{ role: "user", content: prompt }],
         temperature: 0.5,
       });
-      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
+      
+      const rawText = completion.choices[0].message.content;
+      console.log(`🔥 Groq 원본 응답 (질문 생성 ${i + 1}회차):\n`, rawText);
+      
+      // JSON 배열 부분만 확실하게 추출
+      let text = rawText;
+      const match = rawText.match(/\[[\s\S]*\]/);
+      if (match) {
+        text = match[0]; // [ 부터 ] 까지만 추출
+      } else {
+        text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+      }
+
       const parsed = JSON.parse(text);
       if (Array.isArray(parsed) && parsed.length > 0 && !parsed.some(hasCJK)) {
         questions = parsed;
@@ -123,6 +154,7 @@ Output:
       console.log(`질문 생성 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
       console.log(`질문 생성 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+      console.error("에러 내용:", err.message);
     }
   }
 
@@ -217,7 +249,19 @@ Other rules:
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
       });
-      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
+      
+      const rawText = completion.choices[0].message.content;
+      console.log(`🔥 Groq 원본 응답 (답변 평가 ${i + 1}회차):\n`, rawText);
+
+      // JSON 객체 부분만 확실하게 추출
+      let text = rawText;
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) {
+        text = match[0]; // { 부터 } 까지만 추출
+      } else {
+        text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+      }
+
       const parsed = JSON.parse(text);
       if (typeof parsed.score === "number" && typeof parsed.modelAnswer === "string" && !hasCJK(JSON.stringify(parsed))) {
         feedback = parsed;
@@ -226,6 +270,7 @@ Other rules:
       console.log(`피드백 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
       console.log(`피드백 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+      console.error("에러 내용:", err.message);
     }
   }
 
