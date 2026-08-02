@@ -6,5 +6,6 @@ const auth = require('../../middleware/auth'); // auth 인증 미들웨어
 router.post('/questions', auth, interviewController.generateQuestions);
 router.post('/feedback', auth, interviewController.evaluateAnswer); // auth 다시 적용
 router.post('/complete', auth, interviewController.completeSession);
+router.get('/result/:sessionId', auth, interviewController.getSessionResult);
 
 module.exports = router;

@@ -1,7 +1,11 @@
 const pool = require('../../config/db');
 const Groq = require('groq-sdk');
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
+const safeParse = (v) => {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  try { return JSON.parse(v); } catch { return []; }
+};
 const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 
 const TYPE_GUIDE = {
@@ -351,4 +355,42 @@ const completeSession = async ({ sessionId, userId }) => {
   return { sessionId, completed: true };
 };
 
-module.exports = { generateQuestions, evaluateAnswer, completeSession };
+// 세션 결과 조회 (질문 + 답변 + 피드백 한 번에)
+const getSessionResult = async ({ sessionId, userId }) => {
+  // 세션이 이 유저 것인지 확인
+  const [sessions] = await pool.query(
+    "SELECT id, jobName, questionType, mode, completed, createdAt FROM interview_sessions WHERE id = ? AND userId = ?",
+    [sessionId, userId]
+  );
+  if (sessions.length === 0) throw new Error("SESSION_NOT_FOUND");
+
+  // 질문 + 답변 + 피드백을 orderNo 순으로
+  const [rows] = await pool.query(`
+    SELECT
+      q.id AS questionId, q.orderNo, q.content AS question,
+      a.content AS answer,
+      f.score, f.strengths, f.improvements, f.suggestion, f.modelAnswer
+    FROM questions q
+    LEFT JOIN answers a ON a.questionId = q.id
+    LEFT JOIN feedbacks f ON f.answerId = a.id
+    WHERE q.sessionId = ?
+    ORDER BY q.orderNo
+  `, [sessionId]);
+
+  // strengths/improvements는 JSON 문자열이라 파싱해서 배열로
+  const results = rows.map((r) => ({
+    questionId: r.questionId,
+    orderNo: r.orderNo,
+    question: r.question,
+    answer: r.answer,
+    score: r.score,
+    strengths: safeParse(r.strengths),
+    improvements: safeParse(r.improvements),
+    suggestion: r.suggestion,
+    modelAnswer: r.modelAnswer,
+  }));
+
+  return { session: sessions[0], results };
+};
+
+module.exports = { generateQuestions, evaluateAnswer, completeSession, getSessionResult };
