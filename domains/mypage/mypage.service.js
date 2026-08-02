@@ -4,32 +4,47 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 
-// 통계 — 완료(제출)된 세션만, 도전모드 제외
+const safeParse = (v) => {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  try { return JSON.parse(v); } catch { return []; }
+};
+
+// 통계 — 완료된 세션만, 도전모드 제외, 100점 총점 기준
 const getStats = async (userId) => {
   const [sessionRows] = await pool.query(
     "SELECT COUNT(*) AS totalSessions FROM interview_sessions WHERE userId = ? AND mode != '도전' AND completed = TRUE",
     [userId]
   );
+
+  // 세션별 총점(SUM)을 먼저 내고, 그 총점들의 평균
   const [scoreRows] = await pool.query(`
-    SELECT AVG(f.score) AS avgScore
-    FROM feedbacks f
-    JOIN answers a ON a.id = f.answerId
-    JOIN questions q ON q.id = a.questionId
-    JOIN interview_sessions s ON s.id = q.sessionId
-    WHERE s.userId = ? AND s.mode != '도전' AND s.completed = TRUE
+    SELECT AVG(sessionTotal) AS avgScore FROM (
+      SELECT s.id, SUM(f.score) AS sessionTotal
+      FROM feedbacks f
+      JOIN answers a ON a.id = f.answerId
+      JOIN questions q ON q.id = a.questionId
+      JOIN interview_sessions s ON s.id = q.sessionId
+      WHERE s.userId = ? AND s.mode != '도전' AND s.completed = TRUE
+      GROUP BY s.id
+    ) AS sessionScores
   `, [userId]);
+
+  // 이번 달 / 지난 달 (세션별 총점 기준)
   const [monthRows] = await pool.query(`
     SELECT
-      ROUND(AVG(CASE WHEN s.createdAt >= DATE_FORMAT(NOW(), '%Y-%m-01')
-                     THEN f.score END)) AS thisMonth,
-      ROUND(AVG(CASE WHEN s.createdAt >= DATE_FORMAT(NOW() - INTERVAL 1 MONTH, '%Y-%m-01')
-                      AND s.createdAt <  DATE_FORMAT(NOW(), '%Y-%m-01')
-                     THEN f.score END)) AS lastMonth
-    FROM feedbacks f
-    JOIN answers a ON a.id = f.answerId
-    JOIN questions q ON q.id = a.questionId
-    JOIN interview_sessions s ON s.id = q.sessionId
-    WHERE s.userId = ? AND s.mode != '도전' AND s.completed = TRUE
+      ROUND(AVG(CASE WHEN createdAt >= DATE_FORMAT(NOW(), '%Y-%m-01') THEN sessionTotal END)) AS thisMonth,
+      ROUND(AVG(CASE WHEN createdAt >= DATE_FORMAT(NOW() - INTERVAL 1 MONTH, '%Y-%m-01')
+                      AND createdAt <  DATE_FORMAT(NOW(), '%Y-%m-01') THEN sessionTotal END)) AS lastMonth
+    FROM (
+      SELECT s.id, s.createdAt, SUM(f.score) AS sessionTotal
+      FROM feedbacks f
+      JOIN answers a ON a.id = f.answerId
+      JOIN questions q ON q.id = a.questionId
+      JOIN interview_sessions s ON s.id = q.sessionId
+      WHERE s.userId = ? AND s.mode != '도전' AND s.completed = TRUE
+      GROUP BY s.id, s.createdAt
+    ) AS sessionScores
   `, [userId]);
 
   const thisMonth = monthRows[0].thisMonth;
@@ -43,12 +58,12 @@ const getStats = async (userId) => {
   };
 };
 
-// 최근 이력 — 미완료 뱃지용 isIncomplete 포함
+// 최근 이력 — 면접별 총점(SUM, 100점 만점), 미완료 뱃지
 const getHistory = async (userId) => {
   const [rows] = await pool.query(`
     SELECT
       s.id, s.jobName, s.questionType, s.mode, s.completed, s.createdAt,
-      ROUND(AVG(f.score)) AS avgScore,
+      COALESCE(SUM(f.score), 0) AS avgScore,
       TIMESTAMPDIFF(MINUTE, s.createdAt, MAX(a.createdAt)) AS durationMin,
       s.smileCount, s.eyeContactRatio
     FROM interview_sessions s
@@ -63,7 +78,7 @@ const getHistory = async (userId) => {
 
   return rows.map((r) => ({
     ...r,
-    isIncomplete: !r.completed,   // 제출 안 하고 나간 세션 = 미완료
+    isIncomplete: !r.completed,
   }));
 };
 
@@ -99,67 +114,78 @@ const getAnalysis = async (userId) => {
   `, [userId]);
 
   if (rows.length === 0) {
-    return { topStrengths: [], topWeaknesses: [], summary: "아직 분석할 면접 기록이 없습니다." };
+    return {
+      hasData: false,
+      message: "아직 분석할 면접 기록이 없어요. 모의면접을 먼저 진행해보세요.",
+      topStrengths: [], topWeaknesses: [], summary: "",
+    };
   }
 
   const allStrengths = [];
-  const allWeaknesses = [];
+  const allImprovements = [];
   for (const r of rows) {
-    try { allStrengths.push(...JSON.parse(r.strengths || "[]")); } catch {}
-    try { allWeaknesses.push(...JSON.parse(r.improvements || "[]")); } catch {}
+    allStrengths.push(...safeParse(r.strengths));
+    allImprovements.push(...safeParse(r.improvements));
   }
 
-  const prompt = `You are a Korean career coach. Based on the candidate's interview feedback history below, summarize their patterns.
+  const prompt = `다음은 한 지원자가 여러 번의 모의면접에서 받은 피드백 모음입니다.
 
-Strengths collected:
-${allStrengths.join("\n")}
+[강점으로 지적된 것들]
+${allStrengths.map((x) => "- " + x).join("\n")}
 
-Weaknesses collected:
-${allWeaknesses.join("\n")}
+[개선점으로 지적된 것들]
+${allImprovements.map((x) => "- " + x).join("\n")}
 
-Return ONLY a JSON object, all text in Korean:
+위 피드백 전체에서 반복적으로 나타나는 패턴을 분석해주세요.
+- 대표 강점 2~3개 (반복되는 잘하는 점)
+- 대표 약점 2~3개 (반복되는 개선 필요점)
+- 종합 코멘트 1~2문장 (격려 + 핵심 조언)
+
+반드시 한국어로, 아래 JSON 형식으로만 답하세요. 다른 말은 절대 쓰지 마세요.
 {
-  "topStrengths": ["<대표 강점 2~3개>"],
-  "topWeaknesses": ["<대표 약점 2~3개>"],
-  "summary": "<전체 경향을 2~3문장으로 요약>"
-}
-Rules: Korean only, no Chinese characters. Return ONLY the JSON.`;
+  "topStrengths": ["...", "..."],
+  "topWeaknesses": ["...", "..."],
+  "summary": "..."
+}`;
 
+  let analysis = null;
   for (let i = 0; i < 3; i++) {
     try {
       const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: "llama-3.1-8b-instant",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
+        response_format: { type: "json_object" },
       });
-      
-      const rawText = completion.choices[0].message.content;
-      
-      // 💡 안전한 JSON 객체 extraction 로직 추가
-      let text = rawText;
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (match) {
-        text = match[0];
-      } else {
-        text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
-      }
-
+      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(text);
-      if (parsed.topStrengths && parsed.topWeaknesses && !hasCJK(JSON.stringify(parsed))) {
-        return parsed;
+      if (Array.isArray(parsed.topStrengths) && !hasCJK(JSON.stringify(parsed))) {
+        analysis = parsed;
+        break;
       }
       console.log(`분석 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
       console.log(`분석 재시도 ${i + 1}회 (JSON 파싱 실패)`);
-      console.error("에러 내용:", err.message);
     }
   }
-  
-  // Groq 실패 시 (토큰 한도 등) — "기록 없음"이 아니라 일시 오류로 안내
+
+  // Groq 실패 시 "기록 없음"이 아니라 일시 오류로 안내
+  if (!analysis) {
+    return {
+      hasData: true,
+      basedOn: rows.length,
+      topStrengths: [],
+      topWeaknesses: [],
+      summary: "AI 분석을 일시적으로 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+    };
+  }
+
   return {
-    topStrengths: [],
-    topWeaknesses: [],
-    summary: "AI 분석을 일시적으로 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+    hasData: true,
+    basedOn: rows.length,
+    topStrengths: analysis.topStrengths,
+    topWeaknesses: analysis.topWeaknesses,
+    summary: analysis.summary,
   };
 };
 

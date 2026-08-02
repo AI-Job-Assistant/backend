@@ -256,6 +256,7 @@ Other rules:
         model: "llama-3.1-8b-instant",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
+        response_format: { type: "json_object" },
       });
       
       const rawText = completion.choices[0].message.content;
