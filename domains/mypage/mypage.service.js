@@ -51,10 +51,14 @@ const getStats = async (userId) => {
   const lastMonth = monthRows[0].lastMonth;
   const monthlyChange = thisMonth != null && lastMonth != null ? thisMonth - lastMonth : 0;
 
+  const [userRows] = await pool.query("SELECT goal FROM users WHERE id = ?", [userId]);
+  const goal = userRows[0]?.goal ?? null;
+
   return {
     totalSessions: sessionRows[0].totalSessions,
     avgScore: Math.round(scoreRows[0].avgScore || 0),
     monthlyChange,
+    goal,
   };
 };
 
@@ -189,4 +193,10 @@ ${allImprovements.map((x) => "- " + x).join("\n")}
   };
 };
 
-module.exports = { getStats, getHistory, getHeatmap, getAnalysis };
+// 목표 저장
+const updateGoal = async (userId, goal) => {
+  await pool.query("UPDATE users SET goal = ? WHERE id = ?", [goal, userId]);
+  return { goal };
+};
+
+module.exports = { getStats, getHistory, getHeatmap, getAnalysis, updateGoal };

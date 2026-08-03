@@ -39,4 +39,19 @@ const getAnalysis = async (req, res) => {
   }
 };
 
-module.exports = { getStats, getHistory, getHeatmap, getAnalysis };
+const updateGoal = async (req, res) => {
+  try {
+    const userId = req.user?.id ?? null;
+    const { goal } = req.body;
+    if (typeof goal !== "string" || goal.length > 100) {
+      return res.status(400).json({ error: "goal은 100자 이내 문자열이어야 합니다." });
+    }
+    const result = await mypageService.updateGoal(userId, goal);
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "목표 저장에 실패했습니다." });
+  }
+};
+
+module.exports = { getStats, getHistory, getHeatmap, getAnalysis, updateGoal };

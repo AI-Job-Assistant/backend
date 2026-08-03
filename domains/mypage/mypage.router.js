@@ -7,5 +7,6 @@ router.get('/stats', auth, mypageController.getStats);
 router.get('/history', auth, mypageController.getHistory);
 router.get('/heatmap', auth, mypageController.getHeatmap);
 router.get('/analysis', auth, mypageController.getAnalysis);
+router.put('/goal', auth, mypageController.updateGoal);
 
 module.exports = router;
