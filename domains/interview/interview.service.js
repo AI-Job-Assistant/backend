@@ -4,6 +4,29 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 
+// 명백히 답변이 아닌 입력(placeholder, 테스트 문구 등) 판별
+const JUNK_PATTERNS = [
+  "녹음 중", "녹음중", "녹음 중입니다",
+  "테스트", "test", "테스트입니다",
+  "아무말", "몰라요", "모르겠어요", "모르겠습니다",
+  "없음", "없어요", "패스", "스킵", "skip",
+];
+const isJunkAnswer = (raw) => {
+  const s = raw.trim().toLowerCase().replace(/[.。,!?~\s]/g, "");
+  if (s.length < 4) return true; // 4자 미만은 사실상 답변 아님
+  // 아래 단어가 "포함"만 돼도 junk (실전 면접 답변엔 나오지 않는 단어/UI 안내 문구)
+  const CONTAINS_JUNK = [
+    "녹음", "다시누르", "테스트중", "마이크테스트",
+    "음성인식", "인식된답변", "직접수정", "직접입력",
+    "카메라사용안", "카메라사용", "누적돼요", "여기에",
+  ];
+  if (CONTAINS_JUNK.some((p) => s.includes(p.replace(/\s/g, "")))) return true;
+  return JUNK_PATTERNS.some((p) => {
+    const pp = p.toLowerCase().replace(/\s/g, "");
+    return s === pp || (s.length <= pp.length + 2 && s.includes(pp));
+  });
+};
+
 const safeParse = (v) => {
   if (!v) return [];
   if (Array.isArray(v)) return v;
@@ -194,6 +217,26 @@ const evaluateAnswer = async ({ questionId, question, answer, questionType, sess
     return { answerId: emptyAnswerId, questionType, penalty: 0, ...emptyFeedback };
   }
 
+  // 명백한 junk/placeholder → Groq 호출 없이 0점
+  if (isJunkAnswer(answer)) {
+    const junkFeedback = {
+      score: 0, strengths: [],
+      improvements: ["질문에 대한 실질적인 답변이 아닙니다.", "질문의 요지에 맞춰 구체적으로 답변해 주세요."],
+      suggestion: "이 답변은 질문과 관련된 내용을 담고 있지 않습니다. 자신의 경험이나 지식을 바탕으로 구체적으로 답변해 보세요.",
+      modelAnswer: "실질적인 답변이 아니어서 모범답안을 제공하지 않습니다.",
+    };
+    const [r] = await pool.query("INSERT INTO answers (questionId, content) VALUES (?, ?)", [questionId ?? null, answer]);
+    const junkAnswerId = r.insertId;
+    await pool.query(
+      "INSERT INTO feedbacks (answerId, score, strengths, improvements, suggestion, modelAnswer) VALUES (?, ?, ?, ?, ?, ?)",
+      [junkAnswerId, 0, JSON.stringify([]), JSON.stringify(junkFeedback.improvements), junkFeedback.suggestion, junkFeedback.modelAnswer]
+    );
+    if (sessionId && (smileCount != null || eyeContactRatio != null)) {
+      await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]);
+    }
+    return { answerId: junkAnswerId, questionType, penalty: 0, ...junkFeedback };
+  }
+
   const guide = EVAL_GUIDE[questionType] || EVAL_GUIDE["직무기술형"];
   const prompt = `You are a strict Korean interview coach evaluating a candidate's answer.
 
@@ -213,23 +256,41 @@ Return ONLY a JSON object in exactly this shape, all text in Korean:
 }
 
 Scoring rules (VERY IMPORTANT - MAX SCORE IS 20 POINTS):
-- Meaningless answers (single characters like "ㅇ", "ㅁ", "asdf", "없음", "모름", repeated characters like "ㅇㅇㅇ", or random text) MUST score exactly 0. Do NOT invent strengths — leave strengths as [].
+
+STEP 1 — VALIDITY GATE (do this FIRST, before scoring):
+Before scoring, judge whether this is a genuine attempt to answer THIS specific question.
+The gate is STRICT. When in doubt, the answer is INVALID (score 0). It is better to give 0 to a weak answer than to give points to a non-answer.
+An answer is INVALID (score exactly 0, strengths = []) if ANY of these is true:
+- It is shorter than a real sentence a candidate would actually say in an interview.
+- It restates the topic without any actual content (e.g. "잘 계획한다", "카메라 사용하는", "열심히 하겠습니다").
+- It is a fragment, note-to-self, UI text, or clearly not spoken to an interviewer (e.g. "녹음 중", "다시 누르는 중", "테스트", "직접 수정 가능해요", "여기에 음성 인식", "카메라 사용 안 할 거고요").
+- It does not contain at least ONE concrete detail that actually answers the question: a specific method, tool, example, number, or personal experience.
+- IMPORTANT: Merely sharing a word or two with the question topic is NOT enough. If the candidate did not make a real attempt to explain, decide, or describe something relevant, it is INVALID even if a keyword overlaps by coincidence. (e.g. answer "여기에 음성 인식" to a question about software design shares the word "음성/인식" but is NOT an answer → 0.)
+If INVALID → score 0, strengths [], and put "질문에 대한 구체적인 답변이 아닙니다." in improvements. Do NOT praise anything. Do NOT invent strengths. NEVER quote the invalid answer back as if it were a strength.
+
+STEP 2 — Only if the answer passes the gate, apply the scoring rules below.
+- Meaningless answers (single characters like "ㅇ", "ㅁ", "asdf", "없음", "모름", repeated characters like "ㅇㅇㅇ", random text, OR grammatically-valid but content-empty phrases that do not actually answer the question — e.g. "녹음 중", "테스트", "안녕하세요", "그냥 해봤습니다") MUST score exactly 0. Do NOT invent strengths — leave strengths as []. If the answer does not attempt to address the question's topic at all, it is 0 regardless of grammar.
 - Generic filler answers with no real content (e.g. "열심히 하겠습니다", "최선을 다하겠습니다", "잘하겠습니다", "노력하겠습니다") MUST score exactly 0. strengths must be [].
-- Answers under 20 Korean characters with no real content: maximum 5 points.
-- Answers that just repeat the question without substance: maximum 6 points.
-- Only give 14+ when the answer has concrete content, specific examples, or clear reasoning.
-- Do NOT inflate scores. Be strict and honest.
+
+SCORE BANDS (judge by CONTENT, not by length. A long answer with no substance is still shallow):
+- 5-7 points: SHALLOW answer. It addresses the question but gives NO concrete detail — no specific situation, no numbers, no named tool/method, no real outcome. This is the correct band even if the answer is several sentences long. (e.g. "자료를 찾고 전문가에게 물어봤습니다" names vague actions but has no situation or result → 6 points. "규칙 때문에 추가가 힘들었어요" states a difficulty but no specifics → 6 points.) Length alone NEVER earns points.
+- 8-10 points: the answer has ONE concrete detail (a specific example, method, or reasoning) but is thin overall.
+- 11-13 points: the answer has some concrete content AND partial structure, but is missing a clear or measurable result.
+- 14-17 points: concrete situation + specific actions + a clear or measurable result (STAR mostly complete).
+- 18-20 points: fully developed STAR with specific numbers/outcomes and strong reasoning.
+- Do NOT inflate scores. Be strict and honest. When unsure between two bands, choose the LOWER one.
 
 Other rules:
 - Write ALL text in Korean only. Do NOT use Chinese characters.
 - strengths and improvements: 2-3 specific items each referring to the actual answer. (Exception: meaningless answers, strengths = [].)
+- NEVER write a strength that just repeats the candidate's words back (e.g. answer "카메라 사용하는" → strength "카메라 사용하는 부분이 적절합니다"). A strength must point to genuine substance, or be omitted.
 - Return ONLY the JSON. No markdown, no extra text.`;
 
   let feedback = null;
   for (let i = 0; i < 3; i++) {
     try {
       const completion = await groq.chat.completions.create({
-        model: "llama-3.1-8b-instant",
+        model: "llama-3.3-70b-versatile",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
         response_format: { type: "json_object" },
