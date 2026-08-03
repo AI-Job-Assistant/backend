@@ -66,7 +66,7 @@ const signup = async (req, res, next) => {
             },
             process.env.JWT_SECRET,
             {
-                expiresIn: '7d'
+                expiresIn: '30d'
             }
         );
 
@@ -118,7 +118,7 @@ const login = async (req, res, next) => {
             },
             process.env.JWT_SECRET,
             {
-                expiresIn: '7d'
+                expiresIn: '30d'
             }
         );
 
