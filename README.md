@@ -1,94 +1,349 @@
-📄 JobCoach API 명세서 (프론트엔드 ↔ 백엔드 연동 계약 문서)최종 업데이트: 2026-08-02작성자: 백엔드 A (시현)📌 1. 개요 & 기본 설정Base URL: [https://jobcoach-backend-e0yl.onrender.com](https://jobcoach-backend-e0yl.onrender.com) (Render 배포 완료)로컬 개발 시: http://localhost:5000⚠️ 서버 슬립 안내: 무료 플랜 특성상 15분 미사용 시 서버가 잠듭니다. 첫 호출 시 30초 ~ 1분 정도 소요될 수 있으니 시연 전 미리 한 번 호출해 깨워두세요.응답 형식: JSON인증 (JWT):마이페이지 API(stats, history, heatmap, analysis)는 로그인 사용자 본인 데이터만 응답합니다.요청 헤더에 Authorization: Bearer <토큰> 전송 필수 (없으면 401 Unauthorized).⚠️ [중요] 면접 API(questions, feedback) 호출 시에도 반드시 JWT 토큰을 포함해야 세션에 userId가 기록되며, 그래야 마이페이지 이력에 정상 반영됩니다. (토큰 미포함 시 userId: null로 저장되어 이력에서 누락됨)🎨 2. 공통 Enum 값구분값 (Exact Match)비고questionType경험행동형 · 직무기술형 · 상황판단형Figma 표기("직무·기술형" 등)와 차이가 있으니 주의interviewStyle일반 · 압박생략 시 기본값: 일반mode텍스트 · 스피킹 · 도전생략 시 기본값: 텍스트⚠️ 주의: 백엔드 문자열 파싱 규칙이 엄격하므로, 프론트엔드에서 보낼 때 오탈자 없이 위 값과 100% 일치시켜 전송해 주세요.🎯 3. 면접 진행 API3.1 질문 생성Endpoint: POST /api/interview/questions설명: 직무 및 질문 유형에 따라 NCS 기반 질문 5개를 생성하고, 면접 세션을 DB에 저장합니다.📩 Request BodyjobId (DB 내 직무) 또는 jobName (직접 입력 직무) 중 하나를 전송합니다.JSON// Case A: DB에 등록된 직무 (jobId 사용)
-{
-  "jobId": 102,
-  "questionType": "직무기술형"
-}
+# JobCoach Backend API
 
-// Case B: DB에 없는 직무 (jobName 사용)
+> NCS 기반 AI 모의면접 시뮬레이터 (프론트명: **새싹**)
+
+성신여대 교내 경진대회 출품작. 직무 선택 → AI 질문 생성 → 답변 → AI 채점 → 마이페이지 통계까지의 흐름을 제공하는 REST API 서버입니다.
+
+---
+
+## 기술 스택
+
+| 항목 | 내용 |
+|------|------|
+| 런타임 | Node.js + Express |
+| 데이터베이스 | MySQL (로컬 개발 / Railway 클라우드) |
+| AI | Groq API — 질문 생성 `llama-3.1-8b-instant`, 채점 `llama-3.3-70b-versatile` |
+| 인증 | JWT (`Authorization: Bearer <token>`) |
+| 배포 | Render (백엔드) / Firebase Hosting (프론트) |
+
+**배포 URL**
+
+- 백엔드: `https://jobcoach-backend-e0yl.onrender.com`
+- 프론트: `https://sprout-interview.web.app`
+
+> Render 무료 티어는 15분 미사용 시 슬립 상태가 됩니다. 슬립에서 깨어나는 첫 요청은 30~50초가 걸릴 수 있습니다.
+
+---
+
+## 공통 사항
+
+**Base URL**
+
+```
+https://jobcoach-backend-e0yl.onrender.com
+```
+
+**인증**
+
+인증이 필요한 엔드포인트는 요청 헤더에 JWT를 포함해야 합니다.
+
+```
+Authorization: Bearer <accessToken>
+```
+
+토큰 만료 시 `401`이 반환됩니다. 토큰 유효기간은 30일입니다.
+
+**응답 형식**
+
+모든 응답은 JSON입니다. 아래 표기에서 `(auth)`는 인증이 필요한 엔드포인트를 의미합니다.
+
+---
+
+## 면접 (Interview)
+
+### 1. 질문 생성
+
+선택한 직무·질문 유형에 맞춰 NCS 기반 면접 질문을 생성하고 세션을 시작합니다.
+
+```
+POST /api/interview/questions
+```
+
+**Request Body**
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `jobId` | number | △ | 직무 ID. `jobName`이 없으면 필수 |
+| `jobName` | string | △ | 직무명. `jobId`가 없으면 필수 |
+| `questionType` | string | O | `경험행동형` \| `직무기술형` \| `상황판단형` |
+| `interviewStyle` | string | X | `압박` 지정 시 압박면접 모드 |
+| `mode` | string | X | `텍스트` \| `스피킹` \| `도전` (이력 뱃지 구분용) |
+| `sessionType` | string | X | `challenge` 지정 시 도전모드(질문 1개, 통계 제외) |
+| `count` | number | X | `1` 지정 시 도전모드와 동일 처리 |
+| `userId` | number | X | 세션에 연결할 사용자 ID |
+
+**Response `200`**
+
+```json
 {
-  "jobName": "AI 엔지니어",
-  "questionType": "직무기술형"
-}
-선택 파라미터 (Option)sessionType: "challenge" (도전 모드 - 질문 1개, 통계 제외) / "practice" (정식 면접 - 질문 5개)mode: "스피킹" / "텍스트" (마이페이지 이력 뱃지 표시용)interviewStyle: "압박" (압박 면접 모드)count: 1 (도전 모드용 질문 1개 생성)※ sessionType: "challenge", mode: "도전", count: 1 중 하나만 보내도 도전 모드로 자동 처리됩니다.📤 Response (200 OK)JSON{
-  "sessionId": 1,
-  "jobName": "데이터분석가(빅데이터분석가)",
+  "sessionId": 123,
+  "jobName": "데이터 엔지니어",
   "questionType": "직무기술형",
   "questions": [
-    { "id": 1, "orderNo": 1, "content": "질문 내용 1..." },
-    { "id": 2, "orderNo": 2, "content": "질문 내용 2..." }
+    { "id": 1, "orderNo": 1, "content": "대용량 로그를 수집한다면 어디서부터 시작하시겠어요?" }
   ]
 }
-sessionId 및 질문별 id는 답변 제출/평가 API 호출 시 사용되므로 프론트엔드에 저장해 두어야 합니다.3.2 답변 평가 & 피드백Endpoint: POST /api/interview/feedback설명: 질문 유형별 평가 기준(STAR / 기술 / 판단)에 맞춰 답변을 채점하고 피드백을 DB에 저장합니다.📩 Request BodyJSON{
-  "questionId": 1,
-  "question": "질문 내용",
-  "answer": "사용자 답변",
-  "questionType": "직무기술형",
-  "sessionId": 1,
-  "smileCount": 5,          // [스피킹 전용] 선택
-  "eyeContactRatio": 0.7,   // [스피킹 전용] 선택 (0~1 사이 소수)
-  "extraTimeUsed": 1        // [압박 전용] 선택 (추가시간 사용 횟수: 0, 1, 2)
-}
-extraTimeUsed: 20점 만점 기준 추가 시간 1회당 1점 감점 (최대 2점 감점). 감점 시 개선사항 지표에 자동 반영됩니다.🚨 평가 점수 및 방어 로직 (Fail-Safe)20점 만점 채점: score 범위는 0 ~ 20 (숫자형). AI가 100점 스케일로 출력하더라도 백엔드에서 자동으로 5로 나누어 20점 스케일로 보정 저장합니다.빈 답변 처리: answer가 공백/빈 문자열이어도 400 에러 없이 200 OK 응답하며 0점 처리됩니다.AI 파싱 방어: 한자(CJK) 포함 또는 JSON 파싱 오류 시 최대 3회 재시도하며, 최종 실패 시에도 기본 피드백(0점 및 지연 안내)을 안심 반환합니다.📤 Response (200 OK - 일반 응답 예시)JSON{
-  "answerId": 1,
+```
+
+일반 모드는 질문 5개, 도전모드(`sessionType: "challenge"` 또는 `count: 1`)는 1개를 반환합니다.
+
+---
+
+### 2. 답변 채점
+
+한 문항의 답변을 AI가 채점하고 피드백을 반환합니다.
+
+```
+POST /api/interview/feedback
+```
+
+**Request Body**
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `questionId` | number | O | 질문 ID |
+| `question` | string | O | 질문 내용 |
+| `answer` | string | O | 답변 내용 (빈 문자열이면 채점 없이 0점) |
+| `questionType` | string | O | 질문 유형 |
+| `sessionId` | number | X | 세션 ID |
+| `extraTimeUsed` | number | X | 추가 시간 사용 횟수 (1회당 1점 감점, 최대 2회) |
+| `smileCount` | number | X | 표정(웃음) 감지 횟수 |
+| `eyeContactRatio` | number | X | 응시율 |
+
+**Response `200`**
+
+```json
+{
+  "answerId": 456,
   "questionType": "직무기술형",
   "score": 16,
-  "strengths": [
-    "체계적인 분석 도구 활용과 알고리즘 개선에 대한 구체적인 예시 제공",
-    "측정 가능한 결과를 명확하게 제시"
-  ],
-  "improvements": [
-    "해결 과정에서 팀원들의 역할이나 협력에 대한 언급이 부족"
-  ],
-  "suggestion": "팀워크와 기술적인 세부 사항에 대한 설명을 추가하면 답변을 더욱 보완할 수 있습니다.",
-  "modelAnswer": "실시간 데이터 수집 시 발생하는 동기화 오버헤드를 해결하기 위해..."
+  "penalty": 0,
+  "strengths": ["구체적인 사례를 들어 설명했습니다."],
+  "improvements": ["수치화된 결과를 덧붙이면 더 좋습니다."],
+  "suggestion": "상황과 결과를 조금 더 구체적으로 보완해 보세요.",
+  "modelAnswer": "이전 프로젝트에서 ... 처리 지연을 5초에서 0.5초로 줄였습니다."
 }
-📤 Response (200 OK - 빈 답변 응답 예시)JSON{
-  "answerId": 11,
-  "questionType": "직무기술형",
-  "score": 0,
-  "strengths": [],
-  "improvements": [
-    "답변을 입력하지 않았습니다.",
-    "시간 내에 답변을 작성하는 연습이 필요합니다."
-  ],
-  "suggestion": "이 질문에 답변하지 않았습니다. 짧더라도 자신의 생각을 정리해 답변해 보세요.",
-  "modelAnswer": "답변이 없어 모범답안을 제공하지 않습니다."
-}
-📊 4. 마이페이지 API4.1 요약 통계Endpoint: GET /api/mypage/stats헤더: Authorization: Bearer <토큰> 필수📤 Response (200 OK)JSON{
-  "totalSessions": 12,
-  "avgScore": 16,
-  "monthlyChange": 2
-}
-totalSessions: 총 연습 횟수avgScore: 전체 평균 점수 (20점 만점 기준)monthlyChange: 이번 달 평균 − 지난달 평균 (양수: 상승, 음수: 하락, 데이터 없을 시 0)⚠️ 참고: 도전 모드(mode: "도전") 세션은 요약 통계(총 횟수·평균 점수) 수치 산출에서 제외됩니다.4.2 최근 면접 이력Endpoint: GET /api/mypage/history헤더: Authorization: Bearer <토큰> 필수설명: 최근 순으로 최대 10개의 면접 세션 이력을 반환합니다.📤 Response (200 OK)JSON[
-  {
-    "id": 1,
+```
+
+**채점 기준 (20점 만점)**
+
+| 점수 | 기준 |
+|------|------|
+| `0` | 답변이 아님 (무의미한 입력, 질문과 무관한 문구, 상투적 답변) |
+| `5~7` | 답은 했으나 구체성 없음 (구체 상황·수치·방법 없음) |
+| `8~10` | 구체적 디테일 하나 있음, 얕음 |
+| `11~13` | 내용·구조 있으나 결과 미비 |
+| `14~17` | 상황+행동+결과 (STAR 거의 완성) |
+| `18~20` | 수치·결과까지 포함한 완성형 STAR |
+
+> `penalty`는 추가 시간 사용에 따른 감점이며 최종 `score`에 이미 반영되어 있습니다.
+
+---
+
+### 3. 면접 완료 처리 `(auth)`
+
+세션을 완료 상태로 표시합니다. 통계(`getStats`) 집계는 완료된 세션만 대상으로 합니다.
+
+```
+POST /api/interview/complete
+```
+
+**Request Body**
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `sessionId` | number | O | 완료 처리할 세션 ID |
+
+**Response `200`**
+
+```json
+{ "sessionId": 123, "completed": true }
+```
+
+---
+
+### 4. 세션 결과 조회 `(auth)`
+
+한 세션의 모든 질문·답변·채점 결과를 조회합니다.
+
+```
+GET /api/interview/result/:sessionId
+```
+
+**Response `200`**
+
+```json
+{
+  "session": {
+    "id": 123,
     "jobName": "데이터 엔지니어",
     "questionType": "직무기술형",
     "mode": "텍스트",
-    "createdAt": "2026-06-22T09:13:41.000Z",
-    "avgScore": "16.0000",
-    "durationMin": 4,
-    "smileCount": 5,
-    "eyeContactRatio": "0.700"
-  }
-]
-⚠️ avgScore, eyeContactRatio는 DB 연산 특성상 문자열형으로 리턴되므로 프론트엔드에서 Number(avgScore)로 파싱하여 사용해야 합니다.답변을 완결하지 않은 세션은 avgScore, durationMin이 null일 수 있습니다.4.3 점수 히트맵 (잔디 시각화)Endpoint: GET /api/mypage/heatmap헤더: Authorization: Bearer <토큰> 필수📤 Response (200 OK)JSON[
-  {
-    "date": "2026-06-22",
-    "sessionCount": 1,
-    "avgScore": "16.0000"
-  }
-]
-⚠️ avgScore는 Number(avgScore) 파싱 필요 (20점 만점 기준).4.4 강점·약점 AI 분석Endpoint: GET /api/mypage/analysis헤더: Authorization: Bearer <토큰> 필수설명: 누적 피드백 데이터를 기반으로 AI가 강점/약점 패턴을 종합 분석합니다.📤 Response (200 OK)JSON{
-  "hasData": true,
-  "basedOn": 3,
-  "topStrengths": [
-    "구체적인 문제 해결 과정 기술",
-    "측정 가능한 성과 지표 제시"
-  ],
-  "topWeaknesses": [
-    "팀원과의 협력 및 의사소통 과정 설명 부족"
-  ],
-  "summary": "기술적인 문제 해결 역량은 훌륭하나, 조직 내 협업 경험을 조금 더 구체화하면 좋은 평가를 받을 수 있습니다."
+    "completed": 1,
+    "createdAt": "2026-08-04T10:00:00.000Z"
+  },
+  "results": [
+    {
+      "questionId": 1,
+      "orderNo": 1,
+      "question": "대용량 로그를 수집한다면 어디서부터 시작하시겠어요?",
+      "answer": "...",
+      "score": 16,
+      "strengths": ["..."],
+      "improvements": ["..."],
+      "suggestion": "...",
+      "modelAnswer": "..."
+    }
+  ]
 }
-🔍 5. 조회용 공통 APIEndpointMethod설명/api/jobsGET전체 직무 목록 조회/api/departmentsGET전체 학과 목록 조회/api/jobs/:id/ncsGET특정 직무 ID에 해당하는 NCS 능력단위 목록 조회🛠️ 6. 프론트엔드 핵심 변경 & 연동 체크리스트점수 스케일 (20점 만점):백엔드가 제공하는 점수 스케일은 20점 만점입니다.UI 화면 상에 적용되어 있던 score * 5 연산 로직을 제거하고, 20점 만점 기준으로 연동해 주세요.숫자 파싱 (Number()):history 및 heatmap API의 avgScore, eyeContactRatio는 문자열(string) 형태이므로 반드시 Number() 형변환을 거친 후 렌더링하세요.JWT 토큰 필수 전달:질문 생성(POST /api/interview/questions) 및 피드백(POST /api/interview/feedback) 호출 시에도 Header에 Authorization: Bearer <token>을 반드시 넣어야 마이페이지 누락을 방지할 수 있습니다.
+```
+
+> 프론트 주의: 이력 클릭으로 결과를 조회할 때 Base URL을 반드시 붙여야 합니다. 상대경로만 쓰면 `index.html`이 반환됩니다.
+
+---
+
+## 마이페이지 (My Page)
+
+### 5. 통계 조회 `(auth)`
+
+```
+GET /api/mypage/stats
+```
+
+**Response `200`**
+
+```json
+{
+  "totalSessions": 12,
+  "avgScore": 78,
+  "monthlyChange": 5,
+  "goal": "데이터 엔지니어로 취업하기"
+}
+```
+
+| 필드 | 설명 |
+|------|------|
+| `totalSessions` | 완료된 세션 수 |
+| `avgScore` | 세션별 총점(SUM)의 평균 (100점 기준) |
+| `monthlyChange` | 전월 대비 변화 |
+| `goal` | 사용자 목표 (별도 GET 불필요, 여기서 함께 반환) |
+
+---
+
+### 6. 이력 조회 `(auth)`
+
+```
+GET /api/mypage/history
+```
+
+최근 면접 이력을 최대 10개 반환합니다.
+
+**Response `200`**
+
+```json
+[
+  {
+    "sessionId": 123,
+    "jobName": "데이터 엔지니어",
+    "avgScore": 78,
+    "mode": "텍스트",
+    "isIncomplete": false,
+    "createdAt": "2026-08-04T10:00:00.000Z"
+  }
+]
+```
+
+| 필드 | 설명 |
+|------|------|
+| `avgScore` | 해당 면접의 총점(SUM, 최대 100). **첫 문항 점수가 아님** |
+| `mode` | `텍스트` \| `스피킹` \| `도전` (뱃지 표시용) |
+| `isIncomplete` | 미완료 세션 여부 (미완료 뱃지용) |
+
+---
+
+### 7. 잔디(히트맵) 조회 `(auth)`
+
+```
+GET /api/mypage/heatmap
+```
+
+전체 날짜별 면접 기록을 반환합니다 (LIMIT 없음).
+
+> 프론트 주의: 잔디는 `history`(10개 제한)가 아니라 이 `heatmap` API로 그려야 전체 기록이 표시됩니다.
+
+---
+
+### 8. 강약점 분석 `(auth)`
+
+```
+GET /api/mypage/analysis
+```
+
+누적된 피드백을 AI가 분석해 강점·약점을 요약합니다. Groq 호출을 포함하므로 응답이 3~8초 걸릴 수 있습니다.
+
+**Response `200`**
+
+```json
+{
+  "strengths": ["..."],
+  "weaknesses": ["..."],
+  "basedOn": 24
+}
+```
+
+| 필드 | 설명 |
+|------|------|
+| `basedOn` | 분석에 사용된 피드백(답변) 개수 |
+
+> 프론트 주의: 이 API만 Groq 호출로 느립니다. 다른 마이페이지 API와 `Promise.all`로 묶지 말고 별도 로딩 처리를 권장합니다. `basedOn`은 피드백 개수이므로 "답변 N개 기반"으로 표기하세요.
+
+---
+
+### 9. 목표 저장 `(auth)`
+
+```
+PUT /api/mypage/goal
+```
+
+**Request Body**
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `goal` | string | O | 사용자 목표 (100자 이내) |
+
+**Response `200`**
+
+```json
+{ "goal": "데이터 엔지니어로 취업하기" }
+```
+
+> 저장은 이 엔드포인트, 불러오기는 `GET /api/mypage/stats`의 `goal` 필드를 사용합니다.
+
+---
+
+## 인증 (Auth) — 담당: Backend B
+
+로그인·회원가입·유저 관련 엔드포인트는 별도 담당자가 관리합니다. 로그인 성공 시 JWT(유효기간 30일)를 발급받아 이후 요청의 `Authorization` 헤더에 사용합니다.
+
+---
+
+## 에러 응답
+
+| 상태 코드 | 상황 |
+|-----------|------|
+| `400` | 잘못된 요청 (필수 필드 누락 등) |
+| `401` | 인증 실패 / 토큰 만료 |
+| `404` | 존재하지 않는 리소스 (세션·직무 등) |
+| `500` | 서버 오류 (Groq 장애 시 기본 피드백으로 폴백 처리) |
+
+Groq API가 3회 연속 실패하면 채점은 기본 피드백을 반환합니다 (서버가 500으로 죽지 않음).
+
+---
+
+## 팀
+
+| 역할 | 담당 |
+|------|------|
+| Backend A | 면접 세션 / 마이페이지 / AI 프롬프트 / 채점 로직 / 데이터 |
+| Backend B | 인증 / 유저 |
+| Frontend | 화면 / STT / 카메라 |
