@@ -334,7 +334,17 @@ Other rules:
     await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]);
   }
 
-  return { answerId, questionType, penalty, ...feedback };
+  // 도전 모드는 질문이 1개뿐이라 최대 20점 → 화면의 "100점 만점"에 맞춰 응답 점수만 5배로 환산.
+  // (DB에는 위에서 이미 20점 원본을 저장했으므로 통계/결과조회는 영향 없음)
+  let responseScore = feedback.score;
+  if (sessionId) {
+    const [sess] = await pool.query("SELECT mode FROM interview_sessions WHERE id = ?", [sessionId]);
+    if (sess.length > 0 && sess[0].mode === "도전") {
+      responseScore = feedback.score * 5;
+    }
+  }
+
+  return { answerId, questionType, penalty, ...feedback, score: responseScore };
 };
 
 // 면접 완료 처리
