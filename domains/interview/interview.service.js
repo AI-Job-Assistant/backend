@@ -2,7 +2,25 @@ const pool = require('../../config/db');
 const Groq = require('groq-sdk');
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+// CJK(중구어/일어 등) 문자 포함 여부 판별 헬퍼
 const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
+
+// 도전 모드 문자열 여부 판별 헬퍼
+const checkChallengeStr = (val) => {
+  if (!val) return false;
+  const s = String(val).trim().toLowerCase();
+  return s === "challenge" || s === "도전";
+};
+
+// 안전한 JSON 파싱 헬퍼
+const parseExtraObj = (extra) => {
+  if (!extra) return {};
+  if (typeof extra === "object") return extra;
+  if (typeof extra === "string") {
+    try { return JSON.parse(extra); } catch { return {}; }
+  }
+  return {};
+};
 
 // 명백히 답변이 아닌 입력(placeholder, 테스트 문구 등) 판별
 const JUNK_PATTERNS = [
@@ -13,8 +31,7 @@ const JUNK_PATTERNS = [
 ];
 const isJunkAnswer = (raw) => {
   const s = raw.trim().toLowerCase().replace(/[.。,!?~\s]/g, "");
-  if (s.length < 4) return true; // 4자 미만은 사실상 답변 아님
-  // 아래 단어가 "포함"만 돼도 junk (실전 면접 답변엔 나오지 않는 단어/UI 안내 문구)
+  if (s.length < 4) return true;
   const CONTAINS_JUNK = [
     "녹음", "다시누르", "테스트중", "마이크테스트",
     "음성인식", "인식된답변", "직접수정", "직접입력",
@@ -33,7 +50,7 @@ const safeParse = (v) => {
   try { return JSON.parse(v); } catch { return []; }
 };
 
-// IT 직군과 무관한 NCS 제외 (농업/축산/수산 등)
+// IT 직군과 무관한 NCS 분야 제외 조건
 const EXCLUDE = "unitName NOT LIKE '%생육%' AND unitName NOT LIKE '%병충해%' AND unitName NOT LIKE '%재배%' AND unitName NOT LIKE '%작물%' AND unitName NOT LIKE '%농업%' AND unitName NOT LIKE '%축산%' AND unitName NOT LIKE '%양식%' AND unitName NOT LIKE '%어업%' AND unitName NOT LIKE '%임업%' AND unitName NOT LIKE '%원예%'";
 
 const TYPE_GUIDE = {
@@ -42,26 +59,19 @@ const TYPE_GUIDE = {
   "상황판단형": "구체적인 문제 상황이나 딜레마를 시나리오로 먼저 제시한 뒤, '이런 상황이라면 어떻게 판단하고 대응하겠는가'를 묻는 질문.",
 };
 
-
 const JOB_KEYWORDS = {
-  // 데이터 계열
   "데이터분석": ["데이터", "빅데이터"],
   "데이터 시스템": ["데이터", "빅데이터"],
   "데이터 엔지니어": ["데이터", "빅데이터"],
   "데이터": ["데이터", "빅데이터"],
-  // AI 계열
   "머신러닝": ["인공지능", "머신러닝"],
   "AI 엔지니어": ["인공지능"],
   "AI 서비스": ["인공지능"],
   "AI": ["인공지능"],
   "인공지능": ["인공지능"],
-  // 게임
   "게임": ["게임"],
-  // 보안
   "보안": ["보안", "정보보호"],
-  // 네트워크
   "네트워크": ["네트워크"],
-  // 시스템 계열 (구체적인 것 먼저)
   "컴퓨터시스템설계": ["소프트웨어", "아키텍처"],
   "시스템 소프트웨어": ["소프트웨어"],
   "정보 시스템 운영": ["소프트웨어", "운영", "네트워크"],
@@ -75,8 +85,10 @@ const EVAL_GUIDE = {
   "상황판단형": `Evaluate judgment and reasoning. Check if the answer analyzes the situation, weighs options, justifies the decision, and considers consequences/stakeholders.`,
 };
 
-// 질문 생성
-const generateQuestions = async ({ jobId, jobName, questionType, userId, interviewStyle, count, mode, sessionType }) => {
+/**
+ * 면접 질문 생성 함수
+ */
+const generateQuestions = async ({ jobId, jobName, questionType, userId, interviewStyle, count, mode, sessionType, extra }) => {
   if (!jobName) {
     const [jobs] = await pool.query("SELECT jobName FROM jobs WHERE id = ?", [jobId]);
     if (jobs.length === 0) throw new Error("JOB_NOT_FOUND");
@@ -106,16 +118,20 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
   const skillText = skills.map((s) => `- ${s.unitName}: ${s.knowledge}`).join("\n");
   const guide = TYPE_GUIDE[questionType] || TYPE_GUIDE["직무기술형"];
 
-  const isChallenge = (sessionType === "challenge" || mode === "도전" || count === 1);
+  const extraObj = parseExtraObj(extra);
+  const isChallenge = (
+    checkChallengeStr(sessionType) ||
+    checkChallengeStr(mode) ||
+    checkChallengeStr(extraObj.sessionType) ||
+    checkChallengeStr(extraObj.mode) ||
+    count === 1
+  );
+
   const numQuestions = isChallenge ? 1 : 5;
-  const sessionMode =
-    isChallenge ? "도전"
-    : (mode === "스피킹") ? "스피킹"
-    : "텍스트";
+  const sessionMode = isChallenge ? "도전" : (mode === "스피킹" ? "스피킹" : "텍스트");
 
   const styleInstruction = interviewStyle === "압박"
     ? `
-
 PRESSURE MODE (this overrides the neutral tone above):
 Every question must challenge the candidate, not just ask for information.
 Each question MUST do one of these:
@@ -170,9 +186,8 @@ Output:
         questions = parsed;
         break;
       }
-      console.log(`질문 생성 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
-      console.log(`질문 생성 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+      console.log(`질문 생성 재시도 ${i + 1}회`);
     }
   }
 
@@ -196,8 +211,47 @@ Output:
   return { sessionId, jobName, questionType, questions: savedQuestions };
 };
 
-// 답변 평가
-const evaluateAnswer = async ({ questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio, extraTimeUsed }) => {
+/**
+ * 답변 평가 및 피드백 생성 함수
+ */
+const evaluateAnswer = async ({ questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio, extraTimeUsed, sessionType, mode, extra }) => {
+  let targetSessionId = sessionId;
+  if (!targetSessionId && questionId) {
+    try {
+      const [qRows] = await pool.query("SELECT sessionId FROM questions WHERE id = ?", [questionId]);
+      if (qRows.length > 0) targetSessionId = qRows[0].sessionId;
+    } catch (e) {
+      console.error("questionId로 sessionId 추적 실패:", e);
+    }
+  }
+
+  const extraObj = parseExtraObj(extra);
+  let isChallenge = 
+    checkChallengeStr(sessionType) ||
+    checkChallengeStr(mode) ||
+    checkChallengeStr(extraObj.sessionType) ||
+    checkChallengeStr(extraObj.mode);
+
+  if (!isChallenge && targetSessionId) {
+    try {
+      const [sess] = await pool.query(
+        `SELECT mode, (SELECT COUNT(*) FROM questions WHERE sessionId = ?) AS qCount 
+         FROM interview_sessions WHERE id = ?`,
+        [targetSessionId, targetSessionId]
+      );
+      if (sess.length > 0) {
+        const dbMode = sess[0].mode;
+        const qCount = Number(sess[0].qCount || 0);
+        if (checkChallengeStr(dbMode) || qCount === 1) {
+          isChallenge = true;
+        }
+      }
+    } catch (e) {
+      console.error("도전모드 DB 판별 실패:", e);
+    }
+  }
+
+  // 1. 빈 답변 처리
   if (!answer || answer.trim().length === 0) {
     const emptyFeedback = {
       score: 0, strengths: [],
@@ -211,13 +265,13 @@ const evaluateAnswer = async ({ questionId, question, answer, questionType, sess
       "INSERT INTO feedbacks (answerId, score, strengths, improvements, suggestion, modelAnswer) VALUES (?, ?, ?, ?, ?, ?)",
       [emptyAnswerId, 0, JSON.stringify([]), JSON.stringify(emptyFeedback.improvements), emptyFeedback.suggestion, emptyFeedback.modelAnswer]
     );
-    if (sessionId && (smileCount != null || eyeContactRatio != null)) {
-      await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]);
+    if (targetSessionId && (smileCount != null || eyeContactRatio != null)) {
+      await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, targetSessionId]);
     }
     return { answerId: emptyAnswerId, questionType, penalty: 0, ...emptyFeedback };
   }
 
-  // 명백한 junk/placeholder → Groq 호출 없이 0점
+  // 2. 무의미한 문구(junk) 0점 처리
   if (isJunkAnswer(answer)) {
     const junkFeedback = {
       score: 0, strengths: [],
@@ -231,12 +285,13 @@ const evaluateAnswer = async ({ questionId, question, answer, questionType, sess
       "INSERT INTO feedbacks (answerId, score, strengths, improvements, suggestion, modelAnswer) VALUES (?, ?, ?, ?, ?, ?)",
       [junkAnswerId, 0, JSON.stringify([]), JSON.stringify(junkFeedback.improvements), junkFeedback.suggestion, junkFeedback.modelAnswer]
     );
-    if (sessionId && (smileCount != null || eyeContactRatio != null)) {
-      await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]);
+    if (targetSessionId && (smileCount != null || eyeContactRatio != null)) {
+      await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, targetSessionId]);
     }
     return { answerId: junkAnswerId, questionType, penalty: 0, ...junkFeedback };
   }
 
+  // 3. AI 평가 프롬프트
   const guide = EVAL_GUIDE[questionType] || EVAL_GUIDE["직무기술형"];
   const prompt = `You are a strict Korean interview coach evaluating a candidate's answer.
 
@@ -257,33 +312,36 @@ Return ONLY a JSON object in exactly this shape, all text in Korean:
 
 Scoring rules (VERY IMPORTANT - MAX SCORE IS 20 POINTS):
 
+🚨 CRITICAL PENALTY FOR INCOMPLETE / CUT-OFF ANSWERS:
+- If the answer promises a list or explanation (e.g. ends with "다음과 같습니다", "아래와 같습니다", "단계는 다음과 같습니다", "이유는 다음과 같습니다", "첫째,") BUT DOES NOT actually list or explain the steps, it is an INCOMPLETE answer.
+- An INCOMPLETE answer or an answer that only states general intentions/headers without concrete steps MUST BE CAPPED at 5-6 points maximum! NEVER give 8 or higher for an unfinished response.
+
 STEP 1 — VALIDITY GATE (do this FIRST, before scoring):
 Before scoring, judge whether this is a genuine attempt to answer THIS specific question.
-The gate is STRICT. When in doubt, the answer is INVALID (score 0). It is better to give 0 to a weak answer than to give points to a non-answer.
+The gate is STRICT. When in doubt, the answer is INVALID (score 0).
 An answer is INVALID (score exactly 0, strengths = []) if ANY of these is true:
 - It is shorter than a real sentence a candidate would actually say in an interview.
 - It restates the topic without any actual content (e.g. "잘 계획한다", "카메라 사용하는", "열심히 하겠습니다").
 - It is a fragment, note-to-self, UI text, or clearly not spoken to an interviewer (e.g. "녹음 중", "다시 누르는 중", "테스트", "직접 수정 가능해요", "여기에 음성 인식", "카메라 사용 안 할 거고요").
 - It does not contain at least ONE concrete detail that actually answers the question: a specific method, tool, example, number, or personal experience.
-- IMPORTANT: Merely sharing a word or two with the question topic is NOT enough. If the candidate did not make a real attempt to explain, decide, or describe something relevant, it is INVALID even if a keyword overlaps by coincidence. (e.g. answer "여기에 음성 인식" to a question about software design shares the word "음성/인식" but is NOT an answer → 0.)
-If INVALID → score 0, strengths [], and put "질문에 대한 구체적인 답변이 아닙니다." in improvements. Do NOT praise anything. Do NOT invent strengths. NEVER quote the invalid answer back as if it were a strength.
+If INVALID → score 0, strengths [], and put "질문에 대한 구체적인 답변이 아닙니다." in improvements. Do NOT praise anything. Do NOT invent strengths.
 
 STEP 2 — Only if the answer passes the gate, apply the scoring rules below.
-- Meaningless answers (single characters like "ㅇ", "ㅁ", "asdf", "없음", "모름", repeated characters like "ㅇㅇㅇ", random text, OR grammatically-valid but content-empty phrases that do not actually answer the question — e.g. "녹음 중", "테스트", "안녕하세요", "그냥 해봤습니다") MUST score exactly 0. Do NOT invent strengths — leave strengths as []. If the answer does not attempt to address the question's topic at all, it is 0 regardless of grammar.
-- Generic filler answers with no real content (e.g. "열심히 하겠습니다", "최선을 다하겠습니다", "잘하겠습니다", "노력하겠습니다") MUST score exactly 0. strengths must be [].
+- Meaningless answers score 0.
+- Generic filler answers score 0.
 
-SCORE BANDS (judge by CONTENT, not by length. A long answer with no substance is still shallow):
-- 5-7 points: SHALLOW answer. It addresses the question but gives NO concrete detail — no specific situation, no numbers, no named tool/method, no real outcome. This is the correct band even if the answer is several sentences long. (e.g. "자료를 찾고 전문가에게 물어봤습니다" names vague actions but has no situation or result → 6 points. "규칙 때문에 추가가 힘들었어요" states a difficulty but no specifics → 6 points.) Length alone NEVER earns points.
-- 8-10 points: the answer has ONE concrete detail (a specific example, method, or reasoning) but is thin overall.
-- 11-13 points: the answer has some concrete content AND partial structure, but is missing a clear or measurable result.
+SCORE BANDS (judge by CONTENT, not by polite phrasing):
+- 5-7 points: SHALLOW or INCOMPLETE answer.
+  * The answer addresses the topic superficially OR promises steps without listing them (e.g. "단계는 다음과 같습니다" with no actual steps following).
+  * Gives NO concrete detail — no specific situation, no numbers, no named tool/method (e.g. isolation commands, routing table, monitoring tool), no real outcome.
+  * Even if grammatically smooth, general principles without concrete action MUST stay in this 5-7 range.
+- 8-10 points: the answer has AT LEAST ONE concrete detail (a specific tool, command, algorithm, or technique) explaining HOW to execute it, but is brief overall.
+- 11-13 points: the answer has multiple concrete technical details AND a clear step-by-step structure with specific actions.
 - 14-17 points: concrete situation + specific actions + a clear or measurable result (STAR mostly complete).
 - 18-20 points: fully developed STAR with specific numbers/outcomes and strong reasoning.
-- Do NOT inflate scores. Be strict and honest. When unsure between two bands, choose the LOWER one.
 
 Other rules:
-- Write ALL text in Korean only. Do NOT use Chinese characters.
-- strengths and improvements: 2-3 specific items each referring to the actual answer. (Exception: meaningless answers, strengths = [].)
-- NEVER write a strength that just repeats the candidate's words back (e.g. answer "카메라 사용하는" → strength "카메라 사용하는 부분이 적절합니다"). A strength must point to genuine substance, or be omitted.
+- Write ALL text in Korean only. No Chinese characters.
 - Return ONLY the JSON. No markdown, no extra text.`;
 
   let feedback = null;
@@ -301,14 +359,12 @@ Other rules:
         feedback = parsed;
         break;
       }
-      console.log(`피드백 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
-      console.log(`피드백 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+      console.log(`피드백 재시도 ${i + 1}회`);
     }
   }
 
   if (!feedback) {
-    console.log("⚠️ Groq 3회 실패 → 기본 피드백으로 대체");
     feedback = {
       score: 0, strengths: [],
       improvements: ["AI 분석이 일시적으로 지연되었습니다. 다시 시도해 주세요."],
@@ -324,30 +380,27 @@ Other rules:
     feedback.improvements = [...feedback.improvements, `추가 시간을 ${Math.min(extraTimeUsed, 2)}회 사용하여 ${penalty}점 감점되었습니다.`];
   }
 
+  // 도전 모드인 경우 DB 저장 시점에서 100점 만점(5배)으로 환산하여 저장
+  const finalScore = isChallenge ? feedback.score * 5 : feedback.score;
+
   const [answerResult] = await pool.query("INSERT INTO answers (questionId, content) VALUES (?, ?)", [questionId ?? null, answer]);
   const answerId = answerResult.insertId;
+
   await pool.query(
     "INSERT INTO feedbacks (answerId, score, strengths, improvements, suggestion, modelAnswer) VALUES (?, ?, ?, ?, ?, ?)",
-    [answerId, feedback.score, JSON.stringify(feedback.strengths), JSON.stringify(feedback.improvements), feedback.suggestion, feedback.modelAnswer]
+    [answerId, finalScore, JSON.stringify(feedback.strengths), JSON.stringify(feedback.improvements), feedback.suggestion, feedback.modelAnswer]
   );
-  if (sessionId && (smileCount != null || eyeContactRatio != null)) {
-    await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]);
+
+  if (targetSessionId && (smileCount != null || eyeContactRatio != null)) {
+    await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, targetSessionId]);
   }
 
-  // 도전 모드는 질문이 1개뿐이라 최대 20점 → 화면의 "100점 만점"에 맞춰 응답 점수만 5배로 환산.
-  // (DB에는 위에서 이미 20점 원본을 저장했으므로 통계/결과조회는 영향 없음)
-  let responseScore = feedback.score;
-  if (sessionId) {
-    const [sess] = await pool.query("SELECT mode FROM interview_sessions WHERE id = ?", [sessionId]);
-    if (sess.length > 0 && sess[0].mode === "도전") {
-      responseScore = feedback.score * 5;
-    }
-  }
-
-  return { answerId, questionType, penalty, ...feedback, score: responseScore };
+  return { answerId, questionType, penalty, ...feedback, score: finalScore };
 };
 
-// 면접 완료 처리
+/**
+ * 면접 세션 완료 처리
+ */
 const completeSession = async ({ sessionId, userId }) => {
   const [result] = await pool.query(
     "UPDATE interview_sessions SET completed = TRUE WHERE id = ? AND userId = ?",
@@ -357,7 +410,9 @@ const completeSession = async ({ sessionId, userId }) => {
   return { sessionId, completed: true };
 };
 
-// 세션 결과 조회
+/**
+ * 세션 결과 상세 조회
+ */
 const getSessionResult = async ({ sessionId, userId }) => {
   const [sessions] = await pool.query(
     "SELECT id, jobName, questionType, mode, completed, createdAt FROM interview_sessions WHERE id = ? AND userId = ?",
@@ -376,17 +431,26 @@ const getSessionResult = async ({ sessionId, userId }) => {
     ORDER BY q.orderNo
   `, [sessionId]);
 
-  const results = rows.map((r) => ({
-    questionId: r.questionId,
-    orderNo: r.orderNo,
-    question: r.question,
-    answer: r.answer,
-    score: r.score,
-    strengths: safeParse(r.strengths),
-    improvements: safeParse(r.improvements),
-    suggestion: r.suggestion,
-    modelAnswer: r.modelAnswer,
-  }));
+  const isChallenge = checkChallengeStr(sessions[0].mode) || rows.length === 1;
+
+  const results = rows.map((r) => {
+    let score = r.score;
+    // 기존에 DB에 20점 기준으로 잘못 저장되었던 옛 도전 모드 기록 보정 (20점 이하인 경우 5배 환산)
+    if (isChallenge && score != null && score <= 20) {
+      score = score * 5;
+    }
+    return {
+      questionId: r.questionId,
+      orderNo: r.orderNo,
+      question: r.question,
+      answer: r.answer,
+      score: score,
+      strengths: safeParse(r.strengths),
+      improvements: safeParse(r.improvements),
+      suggestion: r.suggestion,
+      modelAnswer: r.modelAnswer,
+    };
+  });
 
   return { session: sessions[0], results };
 };
