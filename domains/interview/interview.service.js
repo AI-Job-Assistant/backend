@@ -2,8 +2,15 @@ const pool = require('../../config/db');
 const Groq = require('groq-sdk');
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// CJK(중구어/일어 등) 문자 포함 여부 판별 헬퍼
-const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
+// CJK(중국어/일어 등) 및 낱개 자음/모음(깨진 한글, 조합형 자모) 포함 여부 검사
+const hasInvalidText = (s) => {
+  if (!s) return false;
+  // 1. CJK (한자, 일어, 라틴 외 특수문자 등)
+  if (/[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s)) return true;
+  // 2. 낱개 한글 자모 (ㄱ-ㅎ, ㅏ-ㅣ) 및 조합형 유니코드 자모 (\u1100-\u11FF)
+  if (/[\u3131-\u318E\u1100-\u11FF]/.test(s)) return true;
+  return false;
+};
 
 // 도전 모드 문자열 여부 판별 헬퍼
 const checkChallengeStr = (val) => {
@@ -159,6 +166,7 @@ CRITICAL WRITING RULES — follow these strictly, they override everything above
 5. ONE topic per question. Never use "~하고, ~하는지" to stack two topics.
 6. Under 60 Korean characters. Complete polite sentences (존댓말), never 반말.
 7. Every question must clearly relate to the role "${jobName}". Do NOT ask about unrelated fields (agriculture, farming, etc).
+8. STRICT LANGUAGE RULE: Use ONLY standard completed Korean syllables (가-힣). NEVER produce single isolated Jamo letters (such as ㅋ, ㅕ, ㄱ, ㄴ, ㅡ, ㅣ) or corrupted Unicode combinations inside words.
 
 Target style:
 - "데이터 품질 때문에 곤란했던 경험이 있나요?"
@@ -171,23 +179,26 @@ Output:
 - Return ONLY a JSON array of ${numQuestions} strings, nothing else.`;
 
   let questions = null;
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     try {
       const completion = await groq.chat.completions.create({
         model: "llama-3.1-8b-instant",
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.5,
+        temperature: 0.4,
       });
       let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
       const match = text.match(/\[[\s\S]*\]/);
       if (match) text = match[0];
       const parsed = JSON.parse(text);
-      if (Array.isArray(parsed) && parsed.length > 0 && !parsed.some(hasCJK)) {
+
+      // 질문 배열 내 오탈자/낱개 자모/CJK 오염이 없는지 엄격히 검사
+      if (Array.isArray(parsed) && parsed.length > 0 && !parsed.some(hasInvalidText)) {
         questions = parsed;
         break;
       }
+      console.log(`질문 생성 재시도 ${i + 1}회 (깨진 한글 또는 특수문자 검출)`);
     } catch (err) {
-      console.log(`질문 생성 재시도 ${i + 1}회`);
+      console.log(`질문 생성 재시도 ${i + 1}회 (JSON 파싱 오류)`);
     }
   }
 
@@ -201,11 +212,13 @@ Output:
 
   const savedQuestions = [];
   for (let i = 0; i < questions.length; i++) {
+    // 저장 전 한글 NFD 조합 문자 정규화(NFC)
+    const normalizedContent = questions[i].normalize('NFC');
     const [q] = await pool.query(
       "INSERT INTO questions (sessionId, orderNo, content) VALUES (?, ?, ?)",
-      [sessionId, i + 1, questions[i]]
+      [sessionId, i + 1, normalizedContent]
     );
-    savedQuestions.push({ id: q.insertId, orderNo: i + 1, content: questions[i] });
+    savedQuestions.push({ id: q.insertId, orderNo: i + 1, content: normalizedContent });
   }
 
   return { sessionId, jobName, questionType, questions: savedQuestions };
@@ -355,7 +368,7 @@ Other rules:
       });
       let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(text);
-      if (typeof parsed.score === "number" && typeof parsed.modelAnswer === "string" && !hasCJK(JSON.stringify(parsed))) {
+      if (typeof parsed.score === "number" && typeof parsed.modelAnswer === "string" && !hasInvalidText(JSON.stringify(parsed))) {
         feedback = parsed;
         break;
       }
@@ -435,7 +448,6 @@ const getSessionResult = async ({ sessionId, userId }) => {
 
   const results = rows.map((r) => {
     let score = r.score;
-    // 기존에 DB에 20점 기준으로 잘못 저장되었던 옛 도전 모드 기록 보정 (20점 이하인 경우 5배 환산)
     if (isChallenge && score != null && score <= 20) {
       score = score * 5;
     }
