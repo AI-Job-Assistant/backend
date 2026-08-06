@@ -302,7 +302,7 @@ Other rules:
 - Return ONLY the JSON. No markdown, no extra text.`;
 
   let feedback = null;
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
     try {
       const completion = await groq.chat.completions.create({
         model: "llama-3.3-70b-versatile",
@@ -320,11 +320,11 @@ Other rules:
     } catch (err) {
       console.log(`피드백 재시도 ${i + 1}회 실패: ${err.message}`);
     }
-    if (i < 3) await sleep(600 * (i + 1)); // 0.6s, 1.2s, 1.8s — 갈수록 더 기다림
+    if (i < 5) await sleep(Math.min(600 * (i + 1), 2000)); // 0.6→1.2→1.8→2.0→2.0s (최대 2초)
   }
 
   if (!feedback) {
-    console.log("⚠️ Groq 4회 실패 → 기본 피드백으로 대체");
+    console.log("⚠️ Groq 6회 실패 → 기본 피드백으로 대체");
     feedback = {
       score: 0, strengths: [],
       improvements: ["AI 분석이 일시적으로 지연되었습니다. 다시 시도해 주세요."],
