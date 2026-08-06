@@ -62,7 +62,8 @@ const getStats = async (userId) => {
   };
 };
 
-// 최근 이력 — 면접별 총점(SUM, 100점 만점), 미완료 뱃지
+// 최근 이력 — 면접별 총점(SUM). 도전 모드는 문제 1개(최대 20점)이므로
+// 결과 화면(feedback 응답)과 동일하게 100점 스케일로 x5 환산해서 표시.
 const getHistory = async (userId) => {
   const [rows] = await pool.query(`
     SELECT
@@ -82,6 +83,8 @@ const getHistory = async (userId) => {
 
   return rows.map((r) => ({
     ...r,
+    // 도전 모드만 x5 (일반/스피킹 면접은 이미 5문제 합산이라 그대로)
+    avgScore: r.mode === '도전' ? Number(r.avgScore) * 5 : r.avgScore,
     isIncomplete: !r.completed,
   }));
 };
