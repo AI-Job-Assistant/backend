@@ -392,12 +392,16 @@ const getSessionResult = async ({ sessionId, userId }) => {
     ORDER BY q.orderNo
   `, [sessionId]);
 
+  // 도전 모드는 문제 1개(최대 20점)이므로 결과 화면도 100점 스케일로 x5 환산
+  // (feedback 응답 · 최근 이력과 동일하게 맞춤. DB는 20점 원본 유지)
+  const isChallenge = sessions[0].mode === "도전";
+
   const results = rows.map((r) => ({
     questionId: r.questionId,
     orderNo: r.orderNo,
     question: r.question,
     answer: r.answer,
-    score: r.score,
+    score: (isChallenge && r.score != null) ? r.score * 5 : r.score,
     strengths: safeParse(r.strengths),
     improvements: safeParse(r.improvements),
     suggestion: r.suggestion,

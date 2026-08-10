@@ -40,9 +40,27 @@ const findById = async (id) => {
     return rows[0];
 };
 
+const findByStudentIdAndEmail = async (studentId, email) => {
+    const [rows] = await db.query(
+        'SELECT id, studentId, email FROM users WHERE studentId = ? AND email = ? LIMIT 1',
+        [studentId, email]
+    );
+    return rows[0] || null;
+};
+
+const updatePassword = async (userId, passwordHash) => {
+    const [result] = await db.query(
+        'UPDATE users SET passwordHash = ? WHERE id = ?',
+        [passwordHash, userId]
+    );
+    return result.affectedRows > 0;
+};
+
 module.exports = {
     getAllUsers,
     findByStudentId,
     createUser,
-    findById
+    findById,
+    findByStudentIdAndEmail,
+    updatePassword
 };
