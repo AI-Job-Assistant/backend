@@ -159,7 +159,7 @@ ${allImprovements.map((x) => "- " + x).join("\n")}
   for (let i = 0; i < 3; i++) {
     try {
       const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-instant",
+        model: "openai/gpt-oss-120b",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
         response_format: { type: "json_object" },

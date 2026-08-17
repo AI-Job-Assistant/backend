@@ -172,7 +172,7 @@ Output:
   for (let i = 0; i < 3; i++) {
     try {
       const completion = await groq.chat.completions.create({
-        model: "llama-3.1-8b-instant",
+        model: "openai/gpt-oss-20b",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.5,
       });
@@ -305,7 +305,7 @@ Other rules:
   for (let i = 0; i < 6; i++) {
     try {
       const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: "openai/gpt-oss-120b",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
         response_format: { type: "json_object" },
