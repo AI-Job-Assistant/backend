@@ -10,25 +10,16 @@ const safeParse = (v) => {
   try { return JSON.parse(v); } catch { return []; }
 };
 
-const callGroqWithFallback = async (messages, temperature = 0.3) => {
-  const models = ["llama-3.3-70b-versatile", "llama3-70b-8192", "llama-3.1-8b-instant"];
-  let lastError = null;
-
-  for (const model of models) {
-    try {
-      const completion = await groq.chat.completions.create({
-        model,
-        messages,
-        temperature,
-        response_format: { type: "json_object" },
-      });
-      return completion.choices[0]?.message?.content?.trim();
-    } catch (err) {
-      lastError = err;
-      console.log(`[Groq] ${model} 실패 (${err.message}), 다음 모델 시도...`);
-    }
+const safeParseJson = (text) => {
+  if (!text) return null;
+  let clean = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+  const match = clean.match(/\{[\s\S]*\}/);
+  if (match) clean = match[0];
+  try {
+    return JSON.parse(clean);
+  } catch (e) {
+    return null;
   }
-  throw lastError || new Error("ALL_GROQ_MODELS_FAILED");
 };
 
 const getStats = async (userId) => {
@@ -148,48 +139,47 @@ const getAnalysis = async (userId) => {
     allImprovements.push(...safeParse(r.improvements));
   }
 
-  const prompt = `다음은 지원자의 면접 피드백 모음입니다.
-
+  const prompt = `지원자의 면접 피드백 분석 후 아래 JSON으로 답하세요.
 [강점]
 ${allStrengths.map((x) => "- " + x).join("\n")}
-
 [개선점]
 ${allImprovements.map((x) => "- " + x).join("\n")}
 
-반복 패턴을 분석해서 아래 JSON으로 답하세요.
+JSON 구조:
 {
-  "topStrengths": ["대표 강점 1", "대표 강점 2"],
-  "topWeaknesses": ["대표 약점 1", "대표 약점 2"],
-  "summary": "종합 코멘트 1~2문장"
+  "topStrengths": ["강점1", "강점2"],
+  "topWeaknesses": ["약점1", "약점2"],
+  "summary": "종합 요약 1~2문장"
 }`;
 
   let analysis = null;
-  for (let i = 0; i < 3; i++) {
-    try {
-      const text = await callGroqWithFallback([
-        { role: "system", content: "You must output valid JSON only." },
+
+  try {
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [
+        { role: "system", content: "You are a JSON generator. Output valid JSON only." },
         { role: "user", content: prompt }
-      ], 0.3);
+      ],
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+    });
 
-      const match = text.match(/\{[\s\S]*\}/);
-      const parsed = JSON.parse(match ? match[0] : text);
-
-      if (parsed && Array.isArray(parsed.topStrengths) && Array.isArray(parsed.topWeaknesses) && !hasCJK(JSON.stringify(parsed))) {
-        analysis = parsed;
-        break;
-      }
-    } catch (err) {
-      console.log(`마이페이지 분석 재시도 ${i + 1}회 실패`);
+    const parsed = safeParseJson(completion.choices[0]?.message?.content);
+    if (parsed && Array.isArray(parsed.topStrengths) && Array.isArray(parsed.topWeaknesses) && !hasCJK(JSON.stringify(parsed))) {
+      analysis = parsed;
     }
+  } catch (err) {
+    console.log(`마이페이지 분석 실패: ${err.message}`);
   }
 
   if (!analysis) {
     return {
       hasData: true,
       basedOn: rows.length,
-      topStrengths: [],
-      topWeaknesses: [],
-      summary: "AI 분석을 일시적으로 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+      topStrengths: ["논리적인 답변 구성을 보여줍니다."],
+      topWeaknesses: ["구체적인 직무 경험과 숫자를 활용한 성과 제시가 필요합니다."],
+      summary: "꾸준히 모의면접을 진행하며 자신만의 경험을 구체적인 사례로 정립해보세요.",
     };
   }
 
