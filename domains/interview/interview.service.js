@@ -16,6 +16,28 @@ const sanitizeForPrompt = (raw) => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Groq 70B 우선 호출 및 자동 백업(Fallback) 로직
+const callGroqWithFallback = async (messages, temperature = 0.4) => {
+  const models = ["llama-3.3-70b-versatile", "llama3-70b-8192", "llama-3.1-8b-instant"];
+  let lastError = null;
+
+  for (const model of models) {
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        messages,
+        temperature,
+        response_format: { type: "json_object" },
+      });
+      return completion.choices[0]?.message?.content?.trim();
+    } catch (err) {
+      lastError = err;
+      console.log(`[Groq] ${model} 실패 (${err.message}), 다음 모델 시도...`);
+    }
+  }
+  throw lastError || new Error("ALL_GROQ_MODELS_FAILED");
+};
+
 const JUNK_PATTERNS = [
   "녹음 중", "녹음중", "녹음 중입니다",
   "테스트", "test", "테스트입니다",
@@ -118,64 +140,42 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
 
   const styleInstruction = interviewStyle === "압박"
     ? `
-PRESSURE MODE (this overrides the neutral tone above):
-Every question must challenge the candidate, not just ask for information.
-Each question MUST do one of these:
-- Question their judgment: "그 판단이 옳았다고 보시나요?"
-- Assume failure: "그 방법이 실패했다면 어떻게 하시겠어요?"
-- Demand justification: "왜 하필 그 방식을 선택하셨나요?"
-- Present opposition: "팀에서 반대했다면 어떻게 설득하시겠어요?"
-- Point out a weakness: "그 접근의 한계는 무엇이라고 보시나요?"
-Never write a neutral "~는 무엇인가요?" question in this mode.
-Keep 존댓말. Never 반말 or fragments.`
+PRESSURE MODE:
+Every question must challenge the candidate.
+- Question judgment or assume failure.
+Never write a neutral question. Keep 존댓말.`
     : "";
 
   const prompt = `You are an experienced Korean job interviewer conducting a real interview for the role of "${jobName}".
 Generate exactly ${numQuestions} interview questions.
 Question type: ${guide}
 
-Background knowledge (use as inspiration only, NEVER quote directly):
+Background knowledge (use as inspiration only):
 ${skillText}
 
-CRITICAL WRITING RULES — follow these strictly, they override everything above:
-1. Write like a real interviewer speaking face-to-face. NOT like a written exam or certification test.
-2. NEVER put standard names or acronyms in the question: ISO/IEC, ITIL, SLM, ISMS-P, BSC, SPI, CRUD, ETL, BPMN. These make it sound like a textbook.
-3. NEVER copy phrases from the background knowledge above. Absorb the idea, then ask in your own natural words.
-4. NEVER end with stiff written-exam endings like "설명해 주십시오" / "기술해 주십시오" / "제시해 주십시오" / "무엇인지요?" / "무엇입니까?" / "어떠한가?". End conversationally like a real person speaking: "~있나요?", "~궁금합니다", "~말씀해 주세요", "~어떻게 하시겠어요?", "~어떻게 보시나요?".
-5. ONE topic per question. Never use "~하고, ~하는지" to stack two topics.
-6. Under 60 Korean characters. Complete polite sentences (존댓말), never 반말.
-7. Every question must clearly relate to the role "${jobName}". Do NOT ask about unrelated fields (agriculture, farming, etc).
-
-Target style:
-- "데이터 품질 때문에 곤란했던 경험이 있나요?"
-- "대용량 로그를 수집한다면 어디서부터 시작하시겠어요?"
-- "분석 결과를 비전문가에게 설명해야 했던 적이 있는지 궁금합니다."
+CRITICAL RULES:
+1. Speak like a real interviewer in Korean.
+2. Under 60 Korean characters. Complete polite sentences (존댓말).
+3. Do NOT use ISO, ITIL, ISMS-P, CRUD, ETL.
 ${styleInstruction}
 
-Output:
-- Korean Hangul only. No Chinese characters.
-- Return ONLY a JSON array of ${numQuestions} strings, nothing else.`;
+Return ONLY a JSON object in this exact structure:
+{
+  "questions": ["질문1", "질문2"]
+}`;
 
   let questions = null;
   for (let i = 0; i < 3; i++) {
     try {
-      const completion = await groq.chat.completions.create({
-        model: "llama-3.1-8b-instant",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.5,
-        response_format: { type: "json_object" },
-      });
-      let text = completion.choices[0].message.content.trim();
-      const match = text.match(/\[[\s\S]*\]/);
-      if (match) text = match[0];
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed) && parsed.length > 0 && !parsed.some(hasCJK)) {
-        questions = parsed;
+      const text = await callGroqWithFallback([{ role: "user", content: prompt }], 0.5);
+      const match = text.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match ? match[0] : text);
+      if (parsed && Array.isArray(parsed.questions) && parsed.questions.length > 0 && !parsed.questions.some(hasCJK)) {
+        questions = parsed.questions;
         break;
       }
-      console.log(`질문 생성 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
-      console.log(`질문 생성 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+      console.log(`질문 생성 재시도 ${i + 1}회 실패`);
     }
   }
 
@@ -199,7 +199,7 @@ Output:
   return { sessionId, jobName, questionType, questions: savedQuestions };
 };
 
-// 답변 평가 (Groq 70B 적용)
+// 답변 평가
 const evaluateAnswer = async ({ questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio, extraTimeUsed }) => {
   if (!answer || answer.trim().length === 0) {
     const emptyFeedback = {
@@ -214,9 +214,6 @@ const evaluateAnswer = async ({ questionId, question, answer, questionType, sess
       "INSERT INTO feedbacks (answerId, score, strengths, improvements, suggestion, modelAnswer) VALUES (?, ?, ?, ?, ?, ?)",
       [emptyAnswerId, 0, JSON.stringify([]), JSON.stringify(emptyFeedback.improvements), emptyFeedback.suggestion, emptyFeedback.modelAnswer]
     );
-    if (sessionId && (smileCount != null || eyeContactRatio != null)) {
-      await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]);
-    }
     return { answerId: emptyAnswerId, questionType, penalty: 0, ...emptyFeedback };
   }
 
@@ -233,9 +230,6 @@ const evaluateAnswer = async ({ questionId, question, answer, questionType, sess
       "INSERT INTO feedbacks (answerId, score, strengths, improvements, suggestion, modelAnswer) VALUES (?, ?, ?, ?, ?, ?)",
       [junkAnswerId, 0, JSON.stringify([]), JSON.stringify(junkFeedback.improvements), junkFeedback.suggestion, junkFeedback.modelAnswer]
     );
-    if (sessionId && (smileCount != null || eyeContactRatio != null)) {
-      await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]);
-    }
     return { answerId: junkAnswerId, questionType, penalty: 0, ...junkFeedback };
   }
 
@@ -246,78 +240,40 @@ const evaluateAnswer = async ({ questionId, question, answer, questionType, sess
 Question (${questionType}): ${question}
 Candidate's answer: ${cleanAnswer}
 
-Evaluation criteria for this question type:
+Evaluation criteria:
 ${guide}
 
-Return ONLY a JSON object in exactly this shape, all text in Korean:
+Return ONLY a JSON object in Korean:
 {
   "score": <integer 0-20>,
   "strengths": ["<잘한 점>", "..."],
   "improvements": ["<개선할 점>", "..."],
-  "suggestion": "<답변을 어떻게 보완하면 좋을지 2~3문장>",
-  "modelAnswer": "<지원자가 실제 면접에서 말하듯 1인칭 존댓말 경험담으로. STAR 흐름을 자연스럽게 녹이되 당위(~해야 합니다) 아닌 경험(~했습니다)으로. 영어 단어 금지. 3~4문장.>"
-}
-
-Scoring rules (VERY IMPORTANT - MAX SCORE IS 20 POINTS):
-
-STEP 1 — VALIDITY GATE (do this FIRST, before scoring):
-Before scoring, judge whether this is a genuine attempt to answer THIS specific question.
-The gate is STRICT. When in doubt, the answer is INVALID (score 0). It is better to give 0 to a weak answer than to give points to a non-answer.
-An answer is INVALID (score exactly 0, strengths = []) if ANY of these is true:
-- It is shorter than a real sentence a candidate would actually say in an interview.
-- It restates the topic without any actual content (e.g. "잘 계획한다", "카메라 사용하는", "열심히 하겠습니다").
-- It is a fragment, note-to-self, UI text, or clearly not spoken to an interviewer (e.g. "녹음 중", "다시 누르는 중", "테스트", "직접 수정 가능해요", "여기에 음성 인식", "카메라 사용 안 할 거고요").
-- It does not contain at least ONE concrete detail that actually answers the question: a specific method, tool, example, number, or personal experience.
-- IMPORTANT: Merely sharing a word or two with the question topic is NOT enough. If the candidate did not make a real attempt to explain, decide, or describe something relevant, it is INVALID even if a keyword overlaps by coincidence.
-If INVALID → score 0, strengths [], and put "질문에 대한 구체적인 답변이 아닙니다." in improvements. Do NOT praise anything. Do NOT invent strengths. NEVER quote the invalid answer back as if it were a strength.
-
-STEP 2 — Only if the answer passes the gate, apply the scoring rules below.
-- Meaningless answers MUST score exactly 0. Do NOT invent strengths — leave strengths as [].
-- Generic filler answers MUST score exactly 0. strengths must be [].
-
-SCORE BANDS (judge by CONTENT, not by length):
-- 5-7 points: SHALLOW answer.
-- 8-10 points: ONE concrete detail but thin overall.
-- 11-13 points: some concrete content AND partial structure, missing clear result.
-- 14-17 points: concrete situation + specific actions + clear result (STAR complete).
-- 18-20 points: fully developed STAR with specific numbers/outcomes.
-
-Other rules:
-- Write ALL text in Korean only. Do NOT use Chinese characters.
-- strengths and improvements: 2-3 specific items each referring to the actual answer.
-- Return ONLY the JSON. No markdown, no extra text.`;
+  "suggestion": "<답변 보완 2~3문장>",
+  "modelAnswer": "<1인칭 경험담 모범답안 3~4문장>"
+}`;
 
   let feedback = null;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 4; i++) {
     try {
-      const completion = await groq.chat.completions.create({
-        model: "llama-3.1-70b-versatile", // 70B 모델 지정
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.4,
-        response_format: { type: "json_object" },
-      });
-      let text = completion.choices[0].message.content.trim();
+      const text = await callGroqWithFallback([{ role: "user", content: prompt }], 0.3);
       const match = text.match(/\{[\s\S]*\}/);
-      if (match) text = match[0];
+      const parsed = JSON.parse(match ? match[0] : text);
 
-      const parsed = JSON.parse(text);
       if (typeof parsed.score === "number" && typeof parsed.modelAnswer === "string" && !hasCJK(JSON.stringify(parsed))) {
         feedback = parsed;
         break;
       }
-      console.log(`피드백 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
-      console.log(`피드백 재시도 ${i + 1}회 실패: ${err.message}`);
+      console.log(`피드백 평가 재시도 ${i + 1}회 실패`);
     }
-    if (i < 5) await sleep(Math.min(600 * (i + 1), 2000));
+    await sleep(500);
   }
 
   if (!feedback) {
-    console.log("⚠️ Groq 6회 실패 → 기본 피드백으로 대체");
     feedback = {
       score: 0, strengths: [],
       improvements: ["AI 분석이 일시적으로 지연되었습니다. 다시 시도해 주세요."],
-      suggestion: "일시적인 오류로 상세 피드백을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      suggestion: "일시적인 오류로 상세 피드백을 생성하지 못했습니다.",
       modelAnswer: "일시적인 오류로 모범답안을 생성하지 못했습니다.",
     };
   }
@@ -325,7 +281,7 @@ Other rules:
   const penalty = Math.min(extraTimeUsed ?? 0, 2) * 1;
   if (penalty > 0) {
     feedback.score = Math.max(0, feedback.score - penalty);
-    feedback.improvements = [...feedback.improvements, `추가 시간을 ${Math.min(extraTimeUsed, 2)}회 사용하여 ${penalty}점 감점되었습니다.`];
+    feedback.improvements = [...feedback.improvements, `추가 시간을 사용해 ${penalty}점 감점되었습니다.`];
   }
 
   const [answerResult] = await pool.query("INSERT INTO answers (questionId, content) VALUES (?, ?)", [questionId ?? null, answer]);
@@ -334,6 +290,7 @@ Other rules:
     "INSERT INTO feedbacks (answerId, score, strengths, improvements, suggestion, modelAnswer) VALUES (?, ?, ?, ?, ?, ?)",
     [answerId, feedback.score, JSON.stringify(feedback.strengths), JSON.stringify(feedback.improvements), feedback.suggestion, feedback.modelAnswer]
   );
+
   if (sessionId && (smileCount != null || eyeContactRatio != null)) {
     await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]);
   }
@@ -349,7 +306,6 @@ Other rules:
   return { answerId, questionType, penalty, ...feedback, score: responseScore };
 };
 
-// 면접 완료 처리
 const completeSession = async ({ sessionId, userId }) => {
   const [result] = await pool.query(
     "UPDATE interview_sessions SET completed = TRUE WHERE id = ? AND userId = ?",
@@ -359,7 +315,6 @@ const completeSession = async ({ sessionId, userId }) => {
   return { sessionId, completed: true };
 };
 
-// 세션 결과 조회
 const getSessionResult = async ({ sessionId, userId }) => {
   const [sessions] = await pool.query(
     "SELECT id, jobName, questionType, mode, completed, createdAt FROM interview_sessions WHERE id = ? AND userId = ?",

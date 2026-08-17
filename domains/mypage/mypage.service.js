@@ -10,7 +10,27 @@ const safeParse = (v) => {
   try { return JSON.parse(v); } catch { return []; }
 };
 
-// 통계 — 완료된 세션만, 도전모드 제외, 100점 총점 기준
+const callGroqWithFallback = async (messages, temperature = 0.3) => {
+  const models = ["llama-3.3-70b-versatile", "llama3-70b-8192", "llama-3.1-8b-instant"];
+  let lastError = null;
+
+  for (const model of models) {
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        messages,
+        temperature,
+        response_format: { type: "json_object" },
+      });
+      return completion.choices[0]?.message?.content?.trim();
+    } catch (err) {
+      lastError = err;
+      console.log(`[Groq] ${model} 실패 (${err.message}), 다음 모델 시도...`);
+    }
+  }
+  throw lastError || new Error("ALL_GROQ_MODELS_FAILED");
+};
+
 const getStats = async (userId) => {
   const [sessionRows] = await pool.query(
     "SELECT COUNT(*) AS totalSessions FROM interview_sessions WHERE userId = ? AND mode != '도전' AND completed = TRUE",
@@ -60,7 +80,6 @@ const getStats = async (userId) => {
   };
 };
 
-// 최근 이력
 const getHistory = async (userId) => {
   const [rows] = await pool.query(`
     SELECT
@@ -85,7 +104,6 @@ const getHistory = async (userId) => {
   }));
 };
 
-// 잔디(히트맵)
 const getHeatmap = async (userId) => {
   const [rows] = await pool.query(`
     SELECT
@@ -103,7 +121,6 @@ const getHeatmap = async (userId) => {
   return rows;
 };
 
-// 강점·약점 분석 (Groq 70B 적용)
 const getAnalysis = async (userId) => {
   const [rows] = await pool.query(`
     SELECT f.strengths, f.improvements
@@ -131,57 +148,38 @@ const getAnalysis = async (userId) => {
     allImprovements.push(...safeParse(r.improvements));
   }
 
-  const prompt = `다음은 한 지원자가 여러 번의 모의면접에서 받은 피드백 모음입니다.
+  const prompt = `다음은 지원자의 면접 피드백 모음입니다.
 
-[강점으로 지적된 것들]
+[강점]
 ${allStrengths.map((x) => "- " + x).join("\n")}
 
-[개선점으로 지적된 것들]
+[개선점]
 ${allImprovements.map((x) => "- " + x).join("\n")}
 
-위 피드백 전체에서 반복적으로 나타나는 패턴을 분석해주세요.
-- 대표 강점 2~3개 (반복되는 잘하는 점)
-- 대표 약점 2~3개 (반복되는 개선 필요점)
-- 종합 코멘트 1~2문장 (격려 + 핵심 조언)
-
-반드시 한국어로, 아래 JSON 형식으로만 답하세요. 다른 말은 절대 쓰지 마세요.
+반복 패턴을 분석해서 아래 JSON으로 답하세요.
 {
-  "topStrengths": ["...", "..."],
-  "topWeaknesses": ["...", "..."],
-  "summary": "..."
+  "topStrengths": ["대표 강점 1", "대표 강점 2"],
+  "topWeaknesses": ["대표 약점 1", "대표 약점 2"],
+  "summary": "종합 코멘트 1~2문장"
 }`;
 
   let analysis = null;
   for (let i = 0; i < 3; i++) {
     try {
-      const completion = await groq.chat.completions.create({
-        model: "llama-3.1-70b-versatile", // 70B 모델 지정
-        messages: [
-          { role: "system", content: "You must output valid JSON only." },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.3,
-        response_format: { type: "json_object" },
-      });
+      const text = await callGroqWithFallback([
+        { role: "system", content: "You must output valid JSON only." },
+        { role: "user", content: prompt }
+      ], 0.3);
 
-      let text = completion.choices[0]?.message?.content?.trim() || "";
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) text = jsonMatch[0];
+      const match = text.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match ? match[0] : text);
 
-      const parsed = JSON.parse(text);
-
-      if (
-        parsed &&
-        Array.isArray(parsed.topStrengths) &&
-        Array.isArray(parsed.topWeaknesses) &&
-        !hasCJK(JSON.stringify(parsed))
-      ) {
+      if (parsed && Array.isArray(parsed.topStrengths) && Array.isArray(parsed.topWeaknesses) && !hasCJK(JSON.stringify(parsed))) {
         analysis = parsed;
         break;
       }
-      console.log(`분석 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
-      console.log(`분석 재시도 ${i + 1}회 (JSON 파싱 실패: ${err.message})`);
+      console.log(`마이페이지 분석 재시도 ${i + 1}회 실패`);
     }
   }
 
@@ -204,7 +202,6 @@ ${allImprovements.map((x) => "- " + x).join("\n")}
   };
 };
 
-// 목표 저장
 const updateGoal = async (userId, goal) => {
   await pool.query("UPDATE users SET goal = ? WHERE id = ?", [goal, userId]);
   return { goal };
