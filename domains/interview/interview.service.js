@@ -186,7 +186,7 @@ Output:
       }
       console.log(`질문 생성 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
-      console.log(`질문 생성 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+      console.log(`질문 생성 재시도 ${i + 1}회:`,err.message);
     }
   }
 
