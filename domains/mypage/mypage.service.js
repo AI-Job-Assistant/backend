@@ -17,7 +17,6 @@ const getStats = async (userId) => {
     [userId]
   );
 
-  // 세션별 총점(SUM)을 먼저 내고, 그 총점들의 평균
   const [scoreRows] = await pool.query(`
     SELECT AVG(sessionTotal) AS avgScore FROM (
       SELECT s.id, SUM(f.score) AS sessionTotal
@@ -30,7 +29,6 @@ const getStats = async (userId) => {
     ) AS sessionScores
   `, [userId]);
 
-  // 이번 달 / 지난 달 (세션별 총점 기준)
   const [monthRows] = await pool.query(`
     SELECT
       ROUND(AVG(CASE WHEN createdAt >= DATE_FORMAT(NOW(), '%Y-%m-01') THEN sessionTotal END)) AS thisMonth,
@@ -62,8 +60,7 @@ const getStats = async (userId) => {
   };
 };
 
-// 최근 이력 — 면접별 총점(SUM). 도전 모드는 문제 1개(최대 20점)이므로
-// 결과 화면(feedback 응답)과 동일하게 100점 스케일로 x5 환산해서 표시.
+// 최근 이력
 const getHistory = async (userId) => {
   const [rows] = await pool.query(`
     SELECT
@@ -83,7 +80,6 @@ const getHistory = async (userId) => {
 
   return rows.map((r) => ({
     ...r,
-    // 도전 모드만 x5 (일반/스피킹 면접은 이미 5문제 합산이라 그대로)
     avgScore: r.mode === '도전' ? Number(r.avgScore) * 5 : r.avgScore,
     isIncomplete: !r.completed,
   }));
@@ -107,7 +103,7 @@ const getHeatmap = async (userId) => {
   return rows;
 };
 
-// 강점·약점 분석 (Groq)
+// 강점·약점 분석 (Groq 70B 적용)
 const getAnalysis = async (userId) => {
   const [rows] = await pool.query(`
     SELECT f.strengths, f.improvements
@@ -159,22 +155,18 @@ ${allImprovements.map((x) => "- " + x).join("\n")}
   for (let i = 0; i < 3; i++) {
     try {
       const completion = await groq.chat.completions.create({
-  model: "llama-3.1-70b-versatile", // 또는 "llama-3.1-8b-instant"
-  messages: [
-    { role: "system", content: "You must output valid JSON only." },
-    { role: "user", content: prompt }
-  ],
-  temperature: 0.3,
-  response_format: { type: "json_object" },
-});
+        model: "llama-3.1-70b-versatile", // 70B 모델 지정
+        messages: [
+          { role: "system", content: "You must output valid JSON only." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+      });
 
       let text = completion.choices[0]?.message?.content?.trim() || "";
-      
-      // JSON 객체 부분만 정규식으로 정확하게 추출 (백틱/주석 문자 방어)
       const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        text = jsonMatch[0];
-      }
+      if (jsonMatch) text = jsonMatch[0];
 
       const parsed = JSON.parse(text);
 
@@ -193,7 +185,6 @@ ${allImprovements.map((x) => "- " + x).join("\n")}
     }
   }
 
-  // Groq 실패 시 "기록 없음"이 아니라 일시 오류 안내
   if (!analysis) {
     return {
       hasData: true,

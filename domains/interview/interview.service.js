@@ -4,31 +4,28 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 
-// 채점 프롬프트에 넣기 전 답변 정리 — 마크다운/특수문자가 프롬프트·JSON을 흔드는 것 방지
 const sanitizeForPrompt = (raw) => {
   return String(raw)
-    .replace(/\*\*/g, "")      // 볼드 마크(**) 제거
-    .replace(/[""]/g, '"')     // 스마트 따옴표 → 일반
-    .replace(/['']/g, "'")     // 스마트 홑따옴표 → 일반
-    .replace(/["`]/g, "")      // 프롬프트/JSON 흔드는 따옴표·백틱 제거
-    .replace(/\s+/g, " ")       // 연속 공백/줄바꿈 정리
+    .replace(/\*\*/g, "")
+    .replace(/[""]/g, '"')
+    .replace(/['']/g, "'")
+    .replace(/["`]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 };
 
-// 짧은 대기 (재시도 사이 Groq에 숨 돌릴 시간)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// 명백히 답변이 아닌 입력(placeholder, 테스트 문구 등) 판별
 const JUNK_PATTERNS = [
   "녹음 중", "녹음중", "녹음 중입니다",
   "테스트", "test", "테스트입니다",
   "아무말", "몰라요", "모르겠어요", "모르겠습니다",
   "없음", "없어요", "패스", "스킵", "skip",
 ];
+
 const isJunkAnswer = (raw) => {
   const s = raw.trim().toLowerCase().replace(/[.。,!?~\s]/g, "");
-  if (s.length < 4) return true; // 4자 미만은 사실상 답변 아님
-  // 아래 단어가 "포함"만 돼도 junk (실전 면접 답변엔 나오지 않는 단어/UI 안내 문구)
+  if (s.length < 4) return true;
   const CONTAINS_JUNK = [
     "녹음", "다시누르", "테스트중", "마이크테스트",
     "음성인식", "인식된답변", "직접수정", "직접입력",
@@ -47,7 +44,6 @@ const safeParse = (v) => {
   try { return JSON.parse(v); } catch { return []; }
 };
 
-// IT 직군과 무관한 NCS 제외 (농업/축산/수산 등)
 const EXCLUDE = "unitName NOT LIKE '%생육%' AND unitName NOT LIKE '%병충해%' AND unitName NOT LIKE '%재배%' AND unitName NOT LIKE '%작물%' AND unitName NOT LIKE '%농업%' AND unitName NOT LIKE '%축산%' AND unitName NOT LIKE '%양식%' AND unitName NOT LIKE '%어업%' AND unitName NOT LIKE '%임업%' AND unitName NOT LIKE '%원예%'";
 
 const TYPE_GUIDE = {
@@ -56,26 +52,19 @@ const TYPE_GUIDE = {
   "상황판단형": "구체적인 문제 상황이나 딜레마를 시나리오로 먼저 제시한 뒤, '이런 상황이라면 어떻게 판단하고 대응하겠는가'를 묻는 질문.",
 };
 
-
 const JOB_KEYWORDS = {
-  // 데이터 계열
   "데이터분석": ["데이터", "빅데이터"],
   "데이터 시스템": ["데이터", "빅데이터"],
   "데이터 엔지니어": ["데이터", "빅데이터"],
   "데이터": ["데이터", "빅데이터"],
-  // AI 계열
   "머신러닝": ["인공지능", "머신러닝"],
   "AI 엔지니어": ["인공지능"],
   "AI 서비스": ["인공지능"],
   "AI": ["인공지능"],
   "인공지능": ["인공지능"],
-  // 게임
   "게임": ["게임"],
-  // 보안
   "보안": ["보안", "정보보호"],
-  // 네트워크
   "네트워크": ["네트워크"],
-  // 시스템 계열 (구체적인 것 먼저)
   "컴퓨터시스템설계": ["소프트웨어", "아키텍처"],
   "시스템 소프트웨어": ["소프트웨어"],
   "정보 시스템 운영": ["소프트웨어", "운영", "네트워크"],
@@ -129,7 +118,6 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
 
   const styleInstruction = interviewStyle === "압박"
     ? `
-
 PRESSURE MODE (this overrides the neutral tone above):
 Every question must challenge the candidate, not just ask for information.
 Each question MUST do one of these:
@@ -171,14 +159,13 @@ Output:
   let questions = null;
   for (let i = 0; i < 3; i++) {
     try {
-      // generateQuestions 함수 내부 (122번째 줄 근처)
-const completion = await groq.chat.completions.create({
-  model: "llama-3.1-8b-instant",
-  messages: [{ role: "user", content: prompt }],
-  temperature: 0.5,
-  response_format: { type: "json_object" }, // <-- 이 줄 추가
-});
-      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.1-8b-instant",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.5,
+        response_format: { type: "json_object" },
+      });
+      let text = completion.choices[0].message.content.trim();
       const match = text.match(/\[[\s\S]*\]/);
       if (match) text = match[0];
       const parsed = JSON.parse(text);
@@ -212,7 +199,7 @@ const completion = await groq.chat.completions.create({
   return { sessionId, jobName, questionType, questions: savedQuestions };
 };
 
-// 답변 평가
+// 답변 평가 (Groq 70B 적용)
 const evaluateAnswer = async ({ questionId, question, answer, questionType, sessionId, smileCount, eyeContactRatio, extraTimeUsed }) => {
   if (!answer || answer.trim().length === 0) {
     const emptyFeedback = {
@@ -233,7 +220,6 @@ const evaluateAnswer = async ({ questionId, question, answer, questionType, sess
     return { answerId: emptyAnswerId, questionType, penalty: 0, ...emptyFeedback };
   }
 
-  // 명백한 junk/placeholder → Groq 호출 없이 0점
   if (isJunkAnswer(answer)) {
     const junkFeedback = {
       score: 0, strengths: [],
@@ -282,37 +268,38 @@ An answer is INVALID (score exactly 0, strengths = []) if ANY of these is true:
 - It restates the topic without any actual content (e.g. "잘 계획한다", "카메라 사용하는", "열심히 하겠습니다").
 - It is a fragment, note-to-self, UI text, or clearly not spoken to an interviewer (e.g. "녹음 중", "다시 누르는 중", "테스트", "직접 수정 가능해요", "여기에 음성 인식", "카메라 사용 안 할 거고요").
 - It does not contain at least ONE concrete detail that actually answers the question: a specific method, tool, example, number, or personal experience.
-- IMPORTANT: Merely sharing a word or two with the question topic is NOT enough. If the candidate did not make a real attempt to explain, decide, or describe something relevant, it is INVALID even if a keyword overlaps by coincidence. (e.g. answer "여기에 음성 인식" to a question about software design shares the word "음성/인식" but is NOT an answer → 0.)
+- IMPORTANT: Merely sharing a word or two with the question topic is NOT enough. If the candidate did not make a real attempt to explain, decide, or describe something relevant, it is INVALID even if a keyword overlaps by coincidence.
 If INVALID → score 0, strengths [], and put "질문에 대한 구체적인 답변이 아닙니다." in improvements. Do NOT praise anything. Do NOT invent strengths. NEVER quote the invalid answer back as if it were a strength.
 
 STEP 2 — Only if the answer passes the gate, apply the scoring rules below.
-- Meaningless answers (single characters like "ㅇ", "ㅁ", "asdf", "없음", "모름", repeated characters like "ㅇㅇㅇ", random text, OR grammatically-valid but content-empty phrases that do not actually answer the question — e.g. "녹음 중", "테스트", "안녕하세요", "그냥 해봤습니다") MUST score exactly 0. Do NOT invent strengths — leave strengths as []. If the answer does not attempt to address the question's topic at all, it is 0 regardless of grammar.
-- Generic filler answers with no real content (e.g. "열심히 하겠습니다", "최선을 다하겠습니다", "잘하겠습니다", "노력하겠습니다") MUST score exactly 0. strengths must be [].
+- Meaningless answers MUST score exactly 0. Do NOT invent strengths — leave strengths as [].
+- Generic filler answers MUST score exactly 0. strengths must be [].
 
-SCORE BANDS (judge by CONTENT, not by length. A long answer with no substance is still shallow):
-- 5-7 points: SHALLOW answer. It addresses the question but gives NO concrete detail — no specific situation, no numbers, no named tool/method, no real outcome. This is the correct band even if the answer is several sentences long. (e.g. "자료를 찾고 전문가에게 물어봤습니다" names vague actions but has no situation or result → 6 points. "규칙 때문에 추가가 힘들었어요" states a difficulty but no specifics → 6 points.) Length alone NEVER earns points.
-- 8-10 points: the answer has ONE concrete detail (a specific example, method, or reasoning) but is thin overall.
-- 11-13 points: the answer has some concrete content AND partial structure, but is missing a clear or measurable result.
-- 14-17 points: concrete situation + specific actions + a clear or measurable result (STAR mostly complete).
-- 18-20 points: fully developed STAR with specific numbers/outcomes and strong reasoning.
-- Do NOT inflate scores. Be strict and honest. When unsure between two bands, choose the LOWER one.
+SCORE BANDS (judge by CONTENT, not by length):
+- 5-7 points: SHALLOW answer.
+- 8-10 points: ONE concrete detail but thin overall.
+- 11-13 points: some concrete content AND partial structure, missing clear result.
+- 14-17 points: concrete situation + specific actions + clear result (STAR complete).
+- 18-20 points: fully developed STAR with specific numbers/outcomes.
 
 Other rules:
 - Write ALL text in Korean only. Do NOT use Chinese characters.
-- strengths and improvements: 2-3 specific items each referring to the actual answer. (Exception: meaningless answers, strengths = [].)
-- NEVER write a strength that just repeats the candidate's words back (e.g. answer "카메라 사용하는" → strength "카메라 사용하는 부분이 적절합니다"). A strength must point to genuine substance, or be omitted.
+- strengths and improvements: 2-3 specific items each referring to the actual answer.
 - Return ONLY the JSON. No markdown, no extra text.`;
 
   let feedback = null;
   for (let i = 0; i < 6; i++) {
     try {
       const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: "llama-3.1-70b-versatile", // 70B 모델 지정
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
         response_format: { type: "json_object" },
       });
-      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
+      let text = completion.choices[0].message.content.trim();
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) text = match[0];
+
       const parsed = JSON.parse(text);
       if (typeof parsed.score === "number" && typeof parsed.modelAnswer === "string" && !hasCJK(JSON.stringify(parsed))) {
         feedback = parsed;
@@ -322,7 +309,7 @@ Other rules:
     } catch (err) {
       console.log(`피드백 재시도 ${i + 1}회 실패: ${err.message}`);
     }
-    if (i < 5) await sleep(Math.min(600 * (i + 1), 2000)); // 0.6→1.2→1.8→2.0→2.0s (최대 2초)
+    if (i < 5) await sleep(Math.min(600 * (i + 1), 2000));
   }
 
   if (!feedback) {
@@ -335,7 +322,6 @@ Other rules:
     };
   }
 
-  // 추가 시간 감점 (1회당 1점, 최대 2회)
   const penalty = Math.min(extraTimeUsed ?? 0, 2) * 1;
   if (penalty > 0) {
     feedback.score = Math.max(0, feedback.score - penalty);
@@ -352,8 +338,6 @@ Other rules:
     await pool.query("UPDATE interview_sessions SET smileCount = ?, eyeContactRatio = ? WHERE id = ?", [smileCount ?? 0, eyeContactRatio ?? 0, sessionId]);
   }
 
-  // 도전 모드는 질문이 1개뿐이라 최대 20점 → 화면의 "100점 만점"에 맞춰 응답 점수만 5배로 환산.
-  // (DB에는 위에서 이미 20점 원본을 저장했으므로 통계/결과조회는 영향 없음)
   let responseScore = feedback.score;
   if (sessionId) {
     const [sess] = await pool.query("SELECT mode FROM interview_sessions WHERE id = ?", [sessionId]);
@@ -394,8 +378,6 @@ const getSessionResult = async ({ sessionId, userId }) => {
     ORDER BY q.orderNo
   `, [sessionId]);
 
-  // 도전 모드는 문제 1개(최대 20점)이므로 결과 화면도 100점 스케일로 x5 환산
-  // (feedback 응답 · 최근 이력과 동일하게 맞춤. DB는 20점 원본 유지)
   const isChallenge = sessions[0].mode === "도전";
 
   const results = rows.map((r) => ({
