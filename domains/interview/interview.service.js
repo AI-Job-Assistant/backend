@@ -171,11 +171,13 @@ Output:
   let questions = null;
   for (let i = 0; i < 3; i++) {
     try {
-      const completion = await groq.chat.completions.create({
-        model: "llama-3.1-8b-instant",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.5,
-      });
+      // generateQuestions 함수 내부 (122번째 줄 근처)
+const completion = await groq.chat.completions.create({
+  model: "llama-3.1-8b-instant",
+  messages: [{ role: "user", content: prompt }],
+  temperature: 0.5,
+  response_format: { type: "json_object" }, // <-- 이 줄 추가
+});
       let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
       const match = text.match(/\[[\s\S]*\]/);
       if (match) text = match[0];

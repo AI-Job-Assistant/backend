@@ -158,14 +158,20 @@ ${allImprovements.map((x) => "- " + x).join("\n")}
   let analysis = null;
   for (let i = 0; i < 3; i++) {
     try {
-      const completion = await groq.chat.completions.create({
-        model: "llama-3.1-8b-instant",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.4,
-        response_format: { type: "json_object" },
-      });
-      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(text);
+      // 마이페이지 분석 기능 내 Groq 호출 및 파싱 부분 수정 예시
+const completion = await groq.chat.completions.create({
+  model: "llama-3.3-70b-versatile",
+  messages: [{ role: "user", content: prompt }],
+  temperature: 0.4,
+  response_format: { type: "json_object" }, // JSON 출력 강제
+});
+
+let text = completion.choices[0].message.content.trim()
+  .replace(/```json/gi, "")
+  .replace(/```/g, "")
+  .trim();
+
+const parsed = JSON.parse(text);
       if (Array.isArray(parsed.topStrengths) && !hasCJK(JSON.stringify(parsed))) {
         analysis = parsed;
         break;
