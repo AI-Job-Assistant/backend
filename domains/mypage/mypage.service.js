@@ -35,7 +35,7 @@ const getStats = async (userId) => {
     SELECT
       ROUND(AVG(CASE WHEN createdAt >= DATE_FORMAT(NOW(), '%Y-%m-01') THEN sessionTotal END)) AS thisMonth,
       ROUND(AVG(CASE WHEN createdAt >= DATE_FORMAT(NOW() - INTERVAL 1 MONTH, '%Y-%m-01')
-                      AND createdAt <  DATE_FORMAT(NOW(), '%Y-%m-01') THEN sessionTotal END)) AS lastMonth
+                     AND createdAt <  DATE_FORMAT(NOW(), '%Y-%m-01') THEN sessionTotal END)) AS lastMonth
     FROM (
       SELECT s.id, s.createdAt, SUM(f.score) AS sessionTotal
       FROM feedbacks f
@@ -158,31 +158,42 @@ ${allImprovements.map((x) => "- " + x).join("\n")}
   let analysis = null;
   for (let i = 0; i < 3; i++) {
     try {
-      // 마이페이지 분석 기능 내 Groq 호출 및 파싱 부분 수정 예시
-const completion = await groq.chat.completions.create({
-  model: "llama-3.3-70b-versatile",
-  messages: [{ role: "user", content: prompt }],
-  temperature: 0.4,
-  response_format: { type: "json_object" }, // JSON 출력 강제
-});
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: "You must output valid JSON only." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+      });
 
-let text = completion.choices[0].message.content.trim()
-  .replace(/```json/gi, "")
-  .replace(/```/g, "")
-  .trim();
+      let text = completion.choices[0]?.message?.content?.trim() || "";
+      
+      // JSON 객체 부분만 정규식으로 정확하게 추출 (백틱/주석 문자 방어)
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        text = jsonMatch[0];
+      }
 
-const parsed = JSON.parse(text);
-      if (Array.isArray(parsed.topStrengths) && !hasCJK(JSON.stringify(parsed))) {
+      const parsed = JSON.parse(text);
+
+      if (
+        parsed &&
+        Array.isArray(parsed.topStrengths) &&
+        Array.isArray(parsed.topWeaknesses) &&
+        !hasCJK(JSON.stringify(parsed))
+      ) {
         analysis = parsed;
         break;
       }
       console.log(`분석 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
     } catch (err) {
-      console.log(`분석 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+      console.log(`분석 재시도 ${i + 1}회 (JSON 파싱 실패: ${err.message})`);
     }
   }
 
-  // Groq 실패 시 "기록 없음"이 아니라 일시 오류로 안내
+  // Groq 실패 시 "기록 없음"이 아니라 일시 오류 안내
   if (!analysis) {
     return {
       hasData: true,
