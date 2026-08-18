@@ -4,7 +4,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ===== 사용 모델 (한 곳에서 관리) =====
 // Groq가 llama-3.1 / llama-3.3 계열을 서비스 종료(decommission)해서 gpt-oss로 교체.
-const MODEL_GENERATE = "openai/gpt-oss-20b";   // 질문 생성 (가볍고 빠름)
+const MODEL_GENERATE = "openai/gpt-oss-120b";   // 질문 생성 (가볍고 빠름)
 const MODEL_GRADE = "openai/gpt-oss-120b";     // 채점 (정확)
 
 const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
