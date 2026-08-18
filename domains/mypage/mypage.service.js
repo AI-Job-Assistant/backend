@@ -2,12 +2,23 @@ const pool = require('../../config/db');
 const Groq = require('groq-sdk');
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+// ===== 사용 모델 (interview.service.js와 동일하게 관리) =====
+// Groq가 llama 계열을 서비스 종료해서 gpt-oss로 교체.
+const MODEL_ANALYZE = "openai/gpt-oss-20b";   // 강약점 분석 (가벼운 요약 작업)
+
 const hasCJK = (s) => /[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]/.test(s);
 
 const safeParse = (v) => {
   if (!v) return [];
   if (Array.isArray(v)) return v;
   try { return JSON.parse(v); } catch { return []; }
+};
+
+// 모델 응답에서 JSON만 안전하게 뽑기 (코드펜스/설명문 섞여 와도 처리)
+const extractJson = (raw) => {
+  let text = String(raw).trim();
+  text = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+  return text;
 };
 
 // 통계 — 완료된 세션만, 도전모드 제외, 100점 총점 기준
@@ -62,8 +73,7 @@ const getStats = async (userId) => {
   };
 };
 
-// 최근 이력 — 면접별 총점(SUM). 도전 모드는 문제 1개(최대 20점)이므로
-// 결과 화면(feedback 응답)과 동일하게 100점 스케일로 x5 환산해서 표시.
+// 최근 이력 — 면접별 총점(SUM). 도전 모드는 문제 1개(최대 20점)이므로 x5 환산해서 표시.
 const getHistory = async (userId) => {
   const [rows] = await pool.query(`
     SELECT
@@ -159,21 +169,23 @@ ${allImprovements.map((x) => "- " + x).join("\n")}
   for (let i = 0; i < 3; i++) {
     try {
       const completion = await groq.chat.completions.create({
-        model: "openai/gpt-oss-120b",
+        model: MODEL_ANALYZE,
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
         response_format: { type: "json_object" },
       });
-      let text = completion.choices[0].message.content.trim().replace(/```json|```/g, "").trim();
+      const text = extractJson(completion.choices[0].message.content);
       const parsed = JSON.parse(text);
       if (Array.isArray(parsed.topStrengths) && !hasCJK(JSON.stringify(parsed))) {
         analysis = parsed;
         break;
       }
-      console.log(`분석 재시도 ${i + 1}회 (형식 또는 한자 문제)`);
+      console.log(`분석 재시도 ${i + 1}회 (형식/한자 문제)`);
     } catch (err) {
-      console.log(`분석 재시도 ${i + 1}회 (JSON 파싱 실패)`);
+      // 진짜 원인을 그대로 출력 (모델 폐기/키/파싱 등 구분됨)
+      console.log(`분석 재시도 ${i + 1}회 실패:`, err.message);
     }
+    if (i < 2) await new Promise((r) => setTimeout(r, 600 * (i + 1)));
   }
 
   // Groq 실패 시 "기록 없음"이 아니라 일시 오류로 안내
