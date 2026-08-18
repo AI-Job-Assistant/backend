@@ -130,15 +130,17 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
     ? `
 
 PRESSURE MODE (this overrides the neutral tone above):
-Every question must challenge the candidate, not just ask for information.
-Each question MUST do one of these:
-- Question their judgment: "그 판단이 옳았다고 보십니까?"
-- Assume failure: "그 방법이 실패했다면 어떻게 하시겠습니까?"
-- Demand justification: "왜 하필 그 방식을 선택하셨습니까?"
-- Present opposition: "팀에서 반대했다면 어떻게 설득하시겠습니까?"
-- Point out a weakness: "그 접근의 한계는 무엇이라고 보십니까?"
-Never write a neutral "~는 무엇입니까?" question in this mode.
-Keep formal 존댓말. Never 반말 or fragments.`
+Make each question challenging and probing, not just informational.
+CRITICAL: Each question must be ONE single sentence. Do NOT stack two questions together (never "~하시겠습니까? 왜 ~하셨습니까?" style with two question marks). Exactly one sharp question per item, one question mark only.
+Across the ${numQuestions} questions, use a DIFFERENT pressure angle for each — do not repeat the same angle twice:
+- challenge their judgment, OR
+- assume their approach already failed, OR
+- demand justification for a choice, OR
+- introduce opposition or a hard constraint, OR
+- point out a limitation of their likely approach, OR
+- force a trade-off between two concrete options.
+Vary the sentence structure too — they must NOT all follow the same template or end the same way.
+Keep formal 존댓말 ("~하시겠습니까?", "~보십니까?"). Never 반말, never fragments, never two questions in one.`
     : "";
 
   const varietyRule = questionType === "상황판단형"
@@ -157,7 +159,7 @@ CRITICAL WRITING RULES — follow these strictly, they override everything above
 2. NEVER put standard names or acronyms in the question: ISO/IEC, ITIL, SLM, ISMS-P, BSC, SPI, CRUD, ETL, BPMN.
 3. NEVER copy phrases from the background knowledge above. Absorb the idea, then ask in your own natural words.
 4. Use FORMAL, professional 존댓말 endings. Preferred endings: "~있으신가요?", "~궁금합니다", "~말씀해 주시겠어요?", "~어떻게 대응하시겠습니까?", "~어떻게 보시나요?", "~어떤 점을 고려하시겠습니까?". STRICTLY AVOID casual/soft endings like "~겠어요?", "~했어요?", "~하시겠어요?", "~찾아보시겠어요?". Replace them with "~하시겠습니까?" style.
-5. ONE topic per question. Never use "~하고, ~하는지" to stack two topics.
+5. ONE topic per question, and only ONE question mark per item. Never use "~하고, ~하는지" to stack two topics, and never put two separate questions in one item.
 6. Under 60 Korean characters. Complete polite sentences (존댓말), never 반말.
 7. Every question must clearly relate to the role "${jobName}". Do NOT ask about unrelated fields (agriculture, farming, etc).
 8. Do NOT start every question with a scenario. Mix scenario-based and direct questions unless the type strictly requires scenarios.
