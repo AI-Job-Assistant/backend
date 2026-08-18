@@ -145,9 +145,9 @@ PRESSURE MODE (this overrides the neutral tone above):
 Every question must challenge the candidate, not just ask for information.
 Each question MUST do one of these:
 - Question their judgment: "그 판단이 옳았다고 보시나요?"
-- Assume failure: "그 방법이 실패했다면 어떻게 하시겠어요?"
+- Assume failure: "그 방법이 실패했다면 어떻게 하시겠습니까?"
 - Demand justification: "왜 하필 그 방식을 선택하셨나요?"
-- Present opposition: "팀에서 반대했다면 어떻게 설득하시겠어요?"
+- Present opposition: "팀에서 반대했다면 어떻게 설득하시겠습니까?"
 - Point out a weakness: "그 접근의 한계는 무엇이라고 보시나요?"
 Never write a neutral "~는 무엇인가요?" question in this mode.
 Keep 존댓말. Never 반말 or fragments.`
@@ -164,7 +164,7 @@ CRITICAL WRITING RULES — follow these strictly, they override everything above
 1. Write like a real interviewer speaking face-to-face. NOT like a written exam or certification test.
 2. NEVER put standard names or acronyms in the question: ISO/IEC, ITIL, SLM, ISMS-P, BSC, SPI, CRUD, ETL, BPMN. These make it sound like a textbook.
 3. NEVER copy phrases from the background knowledge above. Absorb the idea, then ask in your own natural words.
-4. NEVER end with stiff written-exam endings like "설명해 주십시오" / "기술해 주십시오" / "제시해 주십시오" / "무엇인지요?" / "무엇입니까?" / "어떠한가?". End conversationally like a real person speaking: "~있나요?", "~궁금합니다", "~말씀해 주세요", "~어떻게 하시겠어요?", "~어떻게 보시나요?".
+4. NEVER end with stiff written-exam endings like "설명해 주십시오" / "기술해 주십시오" / "제시해 주십시오" / "무엇인지요?" / "무엇입니까?" / "어떠한가?". End politely like a professional interviewer speaking: "~있으신가요?", "~궁금합니다", "~말씀해 주시겠어요?", "~어떻게 대응하시겠습니까?", "~어떻게 보시나요?". Use formal 존댓말 endings. Avoid casual endings like "~겠어요?", "~했어요?".
 5. ONE topic per question. Never use "~하고, ~하는지" to stack two topics.
 6. Under 60 Korean characters. Complete polite sentences (존댓말), never 반말.
 7. Every question must clearly relate to the role "${jobName}". Do NOT ask about unrelated fields (agriculture, farming, etc).
