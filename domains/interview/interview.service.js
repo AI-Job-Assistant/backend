@@ -54,7 +54,9 @@ const safeParse = (v) => {
   try { return JSON.parse(v); } catch { return []; }
 };
 
-const EXCLUDE = "unitName NOT LIKE '%생육%' AND unitName NOT LIKE '%병충해%' AND unitName NOT LIKE '%재배%' AND unitName NOT LIKE '%작물%' AND unitName NOT LIKE '%농업%' AND unitName NOT LIKE '%축산%' AND unitName NOT LIKE '%양식%' AND unitName NOT LIKE '%어업%' AND unitName NOT LIKE '%임업%' AND unitName NOT LIKE '%원예%'";
+// IT 직군과 무관한 NCS 제외 (농업/축산/수산 등) + 로봇 하드웨어 능력단위 제외
+// (소프트웨어 직무에 '로봇 제어' 같은 하드웨어성 단위가 섞여 들어오는 것을 방지)
+const EXCLUDE = "unitName NOT LIKE '%생육%' AND unitName NOT LIKE '%병충해%' AND unitName NOT LIKE '%재배%' AND unitName NOT LIKE '%작물%' AND unitName NOT LIKE '%농업%' AND unitName NOT LIKE '%축산%' AND unitName NOT LIKE '%양식%' AND unitName NOT LIKE '%어업%' AND unitName NOT LIKE '%임업%' AND unitName NOT LIKE '%원예%' AND unitName NOT LIKE '%로봇%' AND unitName NOT LIKE '%기계%' AND unitName NOT LIKE '%전기%' AND unitName NOT LIKE '%전자기기%' AND unitName NOT LIKE '%설비%' AND unitName NOT LIKE '%제조%'";
 
 const TYPE_GUIDE = {
   "경험행동형": "지원자의 과거 경험과 행동을 묻는 질문 (예: ~한 경험을 말해보세요)",
@@ -62,25 +64,42 @@ const TYPE_GUIDE = {
   "상황판단형": "구체적인 문제 상황이나 딜레마를 시나리오로 먼저 제시한 뒤, '이런 상황이라면 어떻게 판단하고 대응하겠는가'를 묻는 질문.",
 };
 
+// 직무명 → NCS 검색 키워드 매핑.
+// 주의: 아래 for 루프가 위에서부터 순서대로 includes()를 검사하므로,
+//       더 구체적인(긴) 직무명을 먼저 두어야 정확히 매칭된다.
+//       실제 직무명은 띄어쓰기 없이 붙여오는 경우가 많아 붙여쓴 형태를 우선 등록.
 const JOB_KEYWORDS = {
+  // 데이터 계열
   "데이터분석": ["데이터", "빅데이터"],
-  "데이터 시스템": ["데이터", "빅데이터"],
-  "데이터 엔지니어": ["데이터", "빅데이터"],
+  "데이터엔지니어": ["데이터", "빅데이터"],
+  "빅데이터": ["데이터", "빅데이터"],
   "데이터": ["데이터", "빅데이터"],
+  // AI 계열
   "머신러닝": ["인공지능", "머신러닝"],
-  "AI 엔지니어": ["인공지능"],
-  "AI 서비스": ["인공지능"],
+  "AI서비스기획": ["인공지능"],
+  "AI엔지니어": ["인공지능"],
   "AI": ["인공지능"],
   "인공지능": ["인공지능"],
+  // 게임
   "게임": ["게임"],
+  // 보안
+  "정보보안": ["보안", "정보보호"],
   "보안": ["보안", "정보보호"],
+  // 네트워크
   "네트워크": ["네트워크"],
+  // 시스템/SW 계열 — 로봇/하드웨어로 새지 않도록 SW 중심 키워드로 좁힘
+  "시스템소프트웨어": ["소프트웨어", "운영체제", "시스템프로그래밍"],
   "컴퓨터시스템설계": ["소프트웨어", "아키텍처"],
-  "시스템 소프트웨어": ["소프트웨어"],
-  "정보 시스템 운영": ["소프트웨어", "운영", "네트워크"],
+  "정보시스템운영": ["소프트웨어", "운영", "네트워크"],
+  "응용소프트웨어": ["소프트웨어", "응용"],
   "소프트웨어": ["소프트웨어"],
-  "시스템": ["소프트웨어", "시스템"],
+  "웹": ["웹", "소프트웨어"],
+  // '시스템' 단독은 가장 마지막 (가장 넓은 매칭이라 fallback)
+  "시스템": ["소프트웨어", "운영체제"],
 };
+
+// 매핑 비교 시 공백을 무시하고 비교 (직무명이 "시스템 소프트웨어"로 와도 매칭되도록)
+const normalize = (s) => String(s).replace(/\s/g, "");
 
 const EVAL_GUIDE = {
   "경험행동형": `Evaluate with the STAR method. Check if the answer clearly shows the Situation, the Task/goal, the specific Actions the candidate took, and the measurable Result. Penalize vague answers with no concrete action or outcome.`,
@@ -96,9 +115,11 @@ const generateQuestions = async ({ jobId, jobName, questionType, userId, intervi
     jobName = jobs[0].jobName;
   }
 
+  // 직무명 공백 무시하고 키워드 매칭
+  const normalizedJob = normalize(jobName);
   let words = null;
   for (const key in JOB_KEYWORDS) {
-    if (jobName.includes(key)) { words = JOB_KEYWORDS[key]; break; }
+    if (normalizedJob.includes(normalize(key))) { words = JOB_KEYWORDS[key]; break; }
   }
 
   let skills = [];
@@ -161,7 +182,7 @@ CRITICAL WRITING RULES — follow these strictly, they override everything above
 4. Use FORMAL, professional 존댓말 endings. Preferred endings: "~있으신가요?", "~궁금합니다", "~말씀해 주시겠어요?", "~어떻게 대응하시겠습니까?", "~어떻게 보시나요?", "~어떤 점을 고려하시겠습니까?". STRICTLY AVOID casual/soft endings like "~겠어요?", "~했어요?", "~하시겠어요?", "~찾아보시겠어요?". Replace them with "~하시겠습니까?" style.
 5. ONE topic per question, and only ONE question mark per item. Never use "~하고, ~하는지" to stack two topics, and never put two separate questions in one item.
 6. Under 60 Korean characters. Complete polite sentences (존댓말), never 반말.
-7. Every question must clearly relate to the role "${jobName}". Do NOT ask about unrelated fields (agriculture, farming, etc).
+7. Every question MUST clearly relate to the software/IT role "${jobName}". Focus on software, systems, data, and development topics. Do NOT ask about hardware, robots, machinery, manufacturing, or unrelated fields (agriculture, farming).
 8. Do NOT start every question with a scenario. Mix scenario-based and direct questions unless the type strictly requires scenarios.
 ${varietyRule}
 
