@@ -257,6 +257,10 @@
 
 ## 8. 기술 참고
 
-- 질문 생성: Groq `llama-3.1-8b-instant` / 채점: `llama-3.3-70b-versatile`
+## AI 모델
+- 질문 생성 · 채점 · 강약점 분석: Groq API (openai/gpt-oss-120b, gpt-oss-20b)
+  - ※ 초기엔 llama-3.1/3.3 계열을 사용했으나, Groq의 모델 서비스 종료(2026)로
+    gpt-oss 계열로 교체. 모델명은 각 service 파일 상단 상수(MODEL_GENERATE,
+    MODEL_GRADE 등)에서 일괄 관리하여 교체가 용이하도록 설계.
 - 채점 = 유효성 게이트(STEP1) → 점수 구간(STEP2) 2단계
 - 인증(로그인/회원가입)은 별도 담당(백엔드 B). 로그인 성공 시 JWT(30일) 발급
